@@ -35,7 +35,9 @@ export function useAudioEngine() {
   const modulatorsRef = useRef(modulators);
   modulatorsRef.current = modulators;
 
-  /* ── re-apply modulation whenever routes/modulators/playing change ── */
+  /* ── Re-apply modulation whenever routes/modulators/playing change.
+       clearAllRoutes in the cleanup restores baselines so the source
+       returns to its user-set values when routes are removed. ── */
   useEffect(() => {
     if (!isPlaying || !engineRef.current) return;
     engineRef.current.applyRoutes(routes, modulators, soundSources);
@@ -79,6 +81,7 @@ export function useAudioEngine() {
     (id: string) => {
       getEngine().removeSource(id);
       setSoundSources((prev) => prev.filter((s) => s.id !== id));
+      // Cascade: remove routes referencing this source
       setRoutes((prev) => prev.filter((r) => r.sourceId !== id));
     },
     [getEngine],
@@ -107,6 +110,7 @@ export function useAudioEngine() {
     (id: string) => {
       getEngine().removeModulator(id);
       setModulators((prev) => prev.filter((m) => m.id !== id));
+      // Cascade: remove routes referencing this modulator
       setRoutes((prev) => prev.filter((r) => r.modulatorId !== id));
     },
     [getEngine],

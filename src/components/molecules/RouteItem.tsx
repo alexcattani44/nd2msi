@@ -24,6 +24,8 @@ interface RouteItemProps {
   route: Route;
   soundSources: SoundSource[];
   modulators: Modulator[];
+  /** true when another route already targets the same source+param */
+  isDuplicate: boolean;
   onUpdate: (id: string, updates: Partial<Route>) => void;
   onDelete: (id: string) => void;
 }
@@ -32,6 +34,7 @@ export function RouteItem({
   route,
   soundSources,
   modulators,
+  isDuplicate,
   onUpdate,
   onDelete,
 }: RouteItemProps) {
@@ -61,6 +64,14 @@ export function RouteItem({
           onClick={() => onDelete(route.id)}
         />
       </div>
+
+      {/* Duplicate warning */}
+      {isDuplicate && (
+        <div className="text-xs text-danger bg-danger/10 border border-danger/30 rounded p-2">
+          Another route already targets {source?.name ?? "this source"}&apos;s{" "}
+          {route.parameter}. Only one route per source+parameter is applied.
+        </div>
+      )}
 
       {/* Modulator selector */}
       <Select
@@ -105,7 +116,8 @@ export function RouteItem({
         onChange={(v) => onUpdate(route.id, { depth: v })}
       />
 
-      {/* Frequency min/max (only for frequency parameter) */}
+      {/* Min/Max controls (only for frequency — the other params use
+          fixed 0..1 or -1..1 ranges that are already sensible) */}
       {route.parameter === "frequency" && (
         <>
           <Slider
@@ -132,12 +144,17 @@ export function RouteItem({
       {/* Status indicator */}
       {modulator?.type === "lfo" && (
         <div className="text-xs text-success bg-bg-primary rounded p-2 mt-1">
-          LFO modulation active
+          LFO → {route.parameter}
         </div>
       )}
       {modulator?.type === "data" && modulator.data && (
         <div className="text-xs text-success bg-bg-primary rounded p-2 mt-1">
-          Data modulation active
+          Data ({modulator.dataLength} pts) → {route.parameter}
+        </div>
+      )}
+      {modulator?.type === "data" && !modulator.data && (
+        <div className="text-xs text-danger bg-bg-primary rounded p-2 mt-1">
+          No data loaded — upload a CSV in the modulator panel
         </div>
       )}
     </div>

@@ -24,6 +24,19 @@ export function RoutingMatrix({
 }: RoutingMatrixProps) {
   const canAdd = soundSources.length > 0 && modulators.length > 0;
 
+  // Build a set of (sourceId:param) keys that appear more than once,
+  // so RouteItem can show a duplicate warning.
+  const paramCounts = new Map<string, number>();
+  for (const r of routes) {
+    const key = `${r.sourceId}:${r.parameter}`;
+    paramCounts.set(key, (paramCounts.get(key) ?? 0) + 1);
+  }
+  const duplicateKeys = new Set(
+    [...paramCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([key]) => key),
+  );
+
   return (
     <div className="bg-bg-primary border-x border-border-color p-4 flex flex-col gap-4 overflow-y-auto">
       <h2 className="font-display font-bold text-base uppercase tracking-widest text-accent-primary border-b border-border-color pb-2">
@@ -53,6 +66,9 @@ export function RoutingMatrix({
               route={route}
               soundSources={soundSources}
               modulators={modulators}
+              isDuplicate={duplicateKeys.has(
+                `${route.sourceId}:${route.parameter}`,
+              )}
               onUpdate={onUpdateRoute}
               onDelete={onDeleteRoute}
             />

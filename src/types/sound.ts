@@ -94,12 +94,17 @@ export function createRoute(
   };
 }
 
+/**
+ * Sensible, audible default ranges per parameter.
+ * Volume stays in -30..0 dB to avoid inaudible silence or clipping.
+ * Pan uses full stereo field. Wet mixes stay 0..1.
+ */
 export function getDefaultRange(param: RoutableParam): { min: number; max: number } {
   switch (param) {
     case "frequency":
       return { min: 200, max: 800 };
     case "volume":
-      return { min: -40, max: -10 };
+      return { min: -30, max: 0 };
     case "pan":
       return { min: -1, max: 1 };
     case "reverbMix":
