@@ -1,37 +1,21 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React from "react";
 import { SoundSourcePanel } from "@/components/organisms/SoundSourcePanel";
 import { Button } from "@/components/atoms/Button";
-import type { SoundSource } from "@/types/sound";
-import { createSoundSource } from "@/types/sound";
+import { useAudioEngine } from "@/hooks/useAudioEngine";
 
 export default function Home() {
-  const [soundSources, setSoundSources] = useState<SoundSource[]>([]);
-  const [masterVolume, setMasterVolume] = useState(-12);
-  const [isPlaying, setIsPlaying] = useState(false);
-
-  const addSoundSource = useCallback(() => {
-    setSoundSources((prev) => [...prev, createSoundSource(prev.length)]);
-  }, []);
-
-  const updateSoundSource = useCallback(
-    (id: string, updates: Partial<SoundSource>) => {
-      setSoundSources((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
-      );
-    },
-    [],
-  );
-
-  const deleteSoundSource = useCallback((id: string) => {
-    setSoundSources((prev) => prev.filter((s) => s.id !== id));
-  }, []);
-
-  const togglePlayback = () => {
-    // Audio engine will be wired up in a later step
-    setIsPlaying((prev) => !prev);
-  };
+  const {
+    soundSources,
+    masterVolume,
+    isPlaying,
+    addSource,
+    updateSource,
+    deleteSource,
+    changeMasterVolume,
+    togglePlayback,
+  } = useAudioEngine();
 
   return (
     <div className="flex flex-col h-screen">
@@ -72,10 +56,10 @@ export default function Home() {
         <SoundSourcePanel
           sources={soundSources}
           masterVolume={masterVolume}
-          onAddSource={addSoundSource}
-          onUpdateSource={updateSoundSource}
-          onDeleteSource={deleteSoundSource}
-          onMasterVolumeChange={setMasterVolume}
+          onAddSource={addSource}
+          onUpdateSource={updateSource}
+          onDeleteSource={deleteSource}
+          onMasterVolumeChange={changeMasterVolume}
         />
 
         {/* Center: Routing Matrix (placeholder) */}
