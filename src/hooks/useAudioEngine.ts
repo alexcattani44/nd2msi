@@ -2,30 +2,47 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { AudioEngine } from "@/audio/AudioEngine";
-import type { SoundSource } from "@/types/sound";
-import { createSoundSource } from "@/types/sound";
+import type { SoundSource, Modulator, Route } from "@/types/sound";
+import { createSoundSource, createModulator, createRoute } from "@/types/sound";
 
 export function useAudioEngine() {
   const engineRef = useRef<AudioEngine | null>(null);
   const [soundSources, setSoundSources] = useState<SoundSource[]>([]);
+  const [modulators, setModulators] = useState<Modulator[]>([]);
+  const [routes, setRoutes] = useState<Route[]>([]);
   const [masterVolume, setMasterVolume] = useState(-12);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Lazily create the engine on the client (Tone.js requires `window`)
   const getEngine = useCallback(() => {
     if (!engineRef.current) {
       engineRef.current = new AudioEngine(masterVolume);
     }
     return engineRef.current;
-  }, []); // masterVolume captured at creation; updated via setMasterVolume
+  }, []);
 
-  // Dispose engine on unmount
   useEffect(() => {
     return () => {
       engineRef.current?.dispose();
       engineRef.current = null;
     };
   }, []);
+
+  // Mutable refs for values accessed inside callbacks
+  const isPlayingRef = useRef(false);
+  isPlayingRef.current = isPlaying;
+  const sourcesRef = useRef(soundSources);
+  sourcesRef.current = soundSources;
+  const modulatorsRef = useRef(modulators);
+  modulatorsRef.current = modulators;
+
+  /* ── re-apply modulation whenever routes/modulators/playing change ── */
+  useEffect(() => {
+    if (!isPlaying || !engineRef.current) return;
+    engineRef.current.applyRoutes(routes, modulators, soundSources);
+    return () => {
+      engineRef.current?.clearAllRoutes();
+    };
+  }, [routes, modulators, isPlaying, soundSources]);
 
   /* ── master volume ── */
   const changeMasterVolume = useCallback(
@@ -36,16 +53,11 @@ export function useAudioEngine() {
     [getEngine],
   );
 
-  // Track playing state in a ref so callbacks don't go stale
-  const isPlayingRef = useRef(false);
-  isPlayingRef.current = isPlaying;
-
   /* ── source CRUD ── */
   const addSource = useCallback(() => {
     setSoundSources((prev) => {
       const source = createSoundSource(prev.length);
       getEngine().addSource(source);
-      // If we're already playing, start the new source immediately
       if (isPlayingRef.current) {
         getEngine().startSource(source);
       }
@@ -67,6 +79,61 @@ export function useAudioEngine() {
     (id: string) => {
       getEngine().removeSource(id);
       setSoundSources((prev) => prev.filter((s) => s.id !== id));
+      setRoutes((prev) => prev.filter((r) => r.sourceId !== id));
+    },
+    [getEngine],
+  );
+
+  /* ── modulator CRUD ── */
+  const addModulator = useCallback(() => {
+    setModulators((prev) => {
+      const mod = createModulator(prev.length);
+      getEngine().addModulator(mod);
+      return [...prev, mod];
+    });
+  }, [getEngine]);
+
+  const updateModulator = useCallback(
+    (id: string, updates: Partial<Modulator>) => {
+      setModulators((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, ...updates } : m)),
+      );
+      getEngine().updateModulator(id, updates);
+    },
+    [getEngine],
+  );
+
+  const deleteModulator = useCallback(
+    (id: string) => {
+      getEngine().removeModulator(id);
+      setModulators((prev) => prev.filter((m) => m.id !== id));
+      setRoutes((prev) => prev.filter((r) => r.modulatorId !== id));
+    },
+    [getEngine],
+  );
+
+  /* ── route CRUD ── */
+  const addRoute = useCallback(() => {
+    const srcs = sourcesRef.current;
+    const mods = modulatorsRef.current;
+    if (srcs.length === 0 || mods.length === 0) return;
+    const route = createRoute(srcs[0].id, mods[0].id);
+    setRoutes((prev) => [...prev, route]);
+  }, []);
+
+  const updateRoute = useCallback(
+    (id: string, updates: Partial<Route>) => {
+      setRoutes((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, ...updates } : r)),
+      );
+    },
+    [],
+  );
+
+  const deleteRoute = useCallback(
+    (id: string) => {
+      getEngine().removeRoute(id);
+      setRoutes((prev) => prev.filter((r) => r.id !== id));
     },
     [getEngine],
   );
@@ -75,13 +142,13 @@ export function useAudioEngine() {
   const togglePlayback = useCallback(async () => {
     const engine = getEngine();
     if (!isPlaying) {
-      // Read the latest sources from the ref-stable callback
       setSoundSources((current) => {
         engine.playAll(current);
         return current;
       });
       setIsPlaying(true);
     } else {
+      engine.clearAllRoutes();
       engine.stopAll();
       setIsPlaying(false);
     }
@@ -89,11 +156,19 @@ export function useAudioEngine() {
 
   return {
     soundSources,
+    modulators,
+    routes,
     masterVolume,
     isPlaying,
     addSource,
     updateSource,
     deleteSource,
+    addModulator,
+    updateModulator,
+    deleteModulator,
+    addRoute,
+    updateRoute,
+    deleteRoute,
     changeMasterVolume,
     togglePlayback,
   };

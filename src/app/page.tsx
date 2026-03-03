@@ -2,17 +2,27 @@
 
 import React from "react";
 import { SoundSourcePanel } from "@/components/organisms/SoundSourcePanel";
+import { RoutingMatrix } from "@/components/organisms/RoutingMatrix";
+import { ModulatorPanel } from "@/components/organisms/ModulatorPanel";
 import { Button } from "@/components/atoms/Button";
 import { useAudioEngine } from "@/hooks/useAudioEngine";
 
 export default function Home() {
   const {
     soundSources,
+    modulators,
+    routes,
     masterVolume,
     isPlaying,
     addSource,
     updateSource,
     deleteSource,
+    addModulator,
+    updateModulator,
+    deleteModulator,
+    addRoute,
+    updateRoute,
+    deleteRoute,
     changeMasterVolume,
     togglePlayback,
   } = useAudioEngine();
@@ -62,25 +72,23 @@ export default function Home() {
           onMasterVolumeChange={changeMasterVolume}
         />
 
-        {/* Center: Routing Matrix (placeholder) */}
-        <div className="bg-bg-primary border-x border-border-color p-4 flex flex-col items-center justify-center overflow-y-auto">
-          <h2 className="font-display font-bold text-base uppercase tracking-widest text-accent-primary mb-4">
-            Routing Matrix
-          </h2>
-          <p className="text-sm text-text-secondary text-center">
-            Coming soon — connect modulators to sound source parameters here.
-          </p>
-        </div>
+        {/* Center: Routing Matrix */}
+        <RoutingMatrix
+          routes={routes}
+          soundSources={soundSources}
+          modulators={modulators}
+          onAddRoute={addRoute}
+          onUpdateRoute={updateRoute}
+          onDeleteRoute={deleteRoute}
+        />
 
-        {/* Right: Modulators (placeholder) */}
-        <div className="bg-bg-secondary border border-border-color rounded-none p-4 flex flex-col items-center justify-center overflow-y-auto">
-          <h2 className="font-display font-bold text-base uppercase tracking-widest text-accent-primary mb-4">
-            Modulators
-          </h2>
-          <p className="text-sm text-text-secondary text-center">
-            Coming soon — add LFOs and data-driven modulators here.
-          </p>
-        </div>
+        {/* Right: Modulators */}
+        <ModulatorPanel
+          modulators={modulators}
+          onAddModulator={addModulator}
+          onUpdateModulator={updateModulator}
+          onDeleteModulator={deleteModulator}
+        />
       </main>
     </div>
   );
