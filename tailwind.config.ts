@@ -1,40 +1,30 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
-  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  content: [
+    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
   theme: {
     extend: {
       colors: {
-        // Background colors
-        "bg-primary": "#561d25",
-        "bg-secondary": "#4f5054",
-        "bg-tertiary": "#383c3f",
-
-        // Accent colors
-        "accent-primary": "#f3eff5",
-        "accent-secondary": "#772e25",
-        "accent-tertiary": "#f1bedd",
-
-        // Text colors
-        "text-primary": "#edddd4",
-        "text-secondary": "#c2ccdd",
-
-        // Utility colors
-        "border-color": "#2d3748",
-        success: "#10b981",
-        danger: "#ef4444",
+        "bg-primary": "var(--bg-primary)",
+        "bg-secondary": "var(--bg-secondary)",
+        "bg-tertiary": "var(--bg-tertiary)",
+        "accent-primary": "var(--accent-primary)",
+        "accent-secondary": "var(--accent-secondary)",
+        "accent-tertiary": "var(--accent-tertiary)",
+        "text-primary": "var(--text-primary)",
+        "text-secondary": "var(--text-secondary)",
+        "border-color": "var(--border-color)",
+        success: "var(--success)",
+        danger: "var(--danger)",
       },
       fontFamily: {
-        serif: ["Georgia", "serif"],
-      },
-      keyframes: {
-        pulse: {
-          "0%, 100%": { opacity: "1" },
-          "50%": { opacity: "0.5" },
-        },
-      },
-      animation: {
-        "pulse-custom": "pulse 2s ease-in-out infinite",
+        body: ["Georgia", "serif"],
+        mono: ["JetBrains Mono", "monospace"],
+        display: ["Syne", "sans-serif"],
       },
     },
   },
