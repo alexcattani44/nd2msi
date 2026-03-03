@@ -1,139 +1,103 @@
 "use client";
 
-import { KnobAtom } from "@/components/atoms/Knob";
-import Image from "next/image";
-import React from "react";
-import * as Tone from "tone";
-
-// cd web/my-app && npm run build
-// cd web/my-app && npm run dev
+import React, { useState, useCallback } from "react";
+import { SoundSourcePanel } from "@/components/organisms/SoundSourcePanel";
+import { Button } from "@/components/atoms/Button";
+import type { SoundSource } from "@/types/sound";
+import { createSoundSource } from "@/types/sound";
 
 export default function Home() {
-  const handleFileChange = async (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const [soundSources, setSoundSources] = useState<SoundSource[]>([]);
+  const [masterVolume, setMasterVolume] = useState(-12);
+  const [isPlaying, setIsPlaying] = useState(false);
 
-    const formData = new FormData();
-    formData.append("csv", file);
+  const addSoundSource = useCallback(() => {
+    setSoundSources((prev) => [...prev, createSoundSource(prev.length)]);
+  }, []);
 
-    const res = await fetch("http://localhost:3000/upload", {
-      method: "POST",
-      body: formData,
-    });
+  const updateSoundSource = useCallback(
+    (id: string, updates: Partial<SoundSource>) => {
+      setSoundSources((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
+      );
+    },
+    [],
+  );
 
-    if (res.ok) {
-      alert("File uploaded and sent to Max.");
-    } else {
-      alert("Upload failed.");
-    }
+  const deleteSoundSource = useCallback((id: string) => {
+    setSoundSources((prev) => prev.filter((s) => s.id !== id));
+  }, []);
+
+  const togglePlayback = () => {
+    // Audio engine will be wired up in a later step
+    setIsPlaying((prev) => !prev);
   };
 
-  // TODO: Add tone.js functionality to play sounds based on CSV data
-  const playSound = () => {
-    // Implementation will go here
-    const fmSynth = new Tone.FMSynth().toDestination();
-    fmSynth.triggerAttackRelease("C5", "4n");
-  };
-
-  // lfo to modulate frequency of sine wave oscillator
-  const lfoModulation = () => {
-    const osc = new Tone.Oscillator("C4", "square").toDestination();
-    const lfo = new Tone.LFO("4n", 300, 400).start();
-    lfo.type = "square";
-    lfo.connect(osc.frequency);
-    osc.start();
-    Tone.Transport.start();
-  };
-
-  // stop sound
-  const stopSound = () => {};
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <h1 className="text-3xl sm:text-4xl font-bold items-center">
-          BIG WWISE THING HERE
+    <div className="flex flex-col h-screen">
+      {/* ── Header ── */}
+      <header className="bg-bg-primary border-b-2 border-accent-primary px-6 py-4 flex items-center justify-between shrink-0">
+        <h1 className="font-display font-extrabold text-2xl tracking-wider text-accent-primary">
+          ND2MSI
         </h1>
-        <img className="items-center" src="/karp-toss.gif" alt="Clauncher" />
-        <div>
-          <h2>Upload CSV File</h2>
-          <input type="file" accept=".csv" onChange={handleFileChange} />
-        </div>
-        <div className="text-center text-sm text-gray-500 max-w-xs sm:max-w-sm">
-          Nice knob
-        </div>
-        <KnobAtom />
-        <button
-          onClick={playSound}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-        >
-          Play Sound
-        </button>
-        <div className="text-center text-sm text-gray-500 max-w-xs sm:max-w-sm">
-          Use an LFO to modulate the frequency of a sine wave oscillator.
-        </div>
-        <button
-          onClick={lfoModulation}
-          className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
-        >
-          Start LFO Modulation
-        </button>
 
-        <button
-          onClick={stopSound}
-          className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-        >
-          Stop Sound
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Status LED */}
+          <div
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded text-sm font-bold ${
+              isPlaying
+                ? "bg-success/20 text-success"
+                : "bg-text-secondary/20 text-text-secondary"
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full bg-current ${isPlaying ? "animate-pulse" : ""}`}
+            />
+            {isPlaying ? "PLAYING" : "STOPPED"}
+          </div>
+
+          <Button
+            label={isPlaying ? "STOP" : "PLAY"}
+            variant="primary"
+            onClick={togglePlayback}
+          />
+          <Button label="SAVE PROJECT" variant="secondary" />
+          <Button label="LOAD PROJECT" variant="secondary" />
+        </div>
+      </header>
+
+      {/* ── Main 3-column layout ── */}
+      <main className="flex-1 grid grid-cols-[300px_1fr_300px] gap-0 overflow-hidden">
+        {/* Left: Sound Sources */}
+        <SoundSourcePanel
+          sources={soundSources}
+          masterVolume={masterVolume}
+          onAddSource={addSoundSource}
+          onUpdateSource={updateSoundSource}
+          onDeleteSource={deleteSoundSource}
+          onMasterVolumeChange={setMasterVolume}
+        />
+
+        {/* Center: Routing Matrix (placeholder) */}
+        <div className="bg-bg-primary border-x border-border-color p-4 flex flex-col items-center justify-center overflow-y-auto">
+          <h2 className="font-display font-bold text-base uppercase tracking-widest text-accent-primary mb-4">
+            Routing Matrix
+          </h2>
+          <p className="text-sm text-text-secondary text-center">
+            Coming soon — connect modulators to sound source parameters here.
+          </p>
+        </div>
+
+        {/* Right: Modulators (placeholder) */}
+        <div className="bg-bg-secondary border border-border-color rounded-none p-4 flex flex-col items-center justify-center overflow-y-auto">
+          <h2 className="font-display font-bold text-base uppercase tracking-widest text-accent-primary mb-4">
+            Modulators
+          </h2>
+          <p className="text-sm text-text-secondary text-center">
+            Coming soon — add LFOs and data-driven modulators here.
+          </p>
+        </div>
       </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }

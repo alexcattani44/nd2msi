@@ -2,20 +2,102 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── ND2MSI Theme ──
+   All colors and typography are defined here as CSS variables.
+   To re-skin the app, change only these values.
+*/
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Backgrounds */
+  --bg-primary: #561d25;
+  --bg-secondary: #4f5054;
+  --bg-tertiary: #383c3f;
+
+  /* Accents */
+  --accent-primary: #f3eff5;
+  --accent-secondary: #772e25;
+  --accent-tertiary: #f1bedd;
+
+  /* Text */
+  --text-primary: #edddd4;
+  --text-secondary: #c2ccdd;
+
+  /* Borders */
+  --border-color: #2d3748;
+
+  /* Semantic */
+  --success: #10b981;
+  --danger: #ef4444;
+
+  /* Typography */
+  --font-body: "Georgia", serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Syne", sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-body);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow-x: hidden;
+}
+
+#__next {
+  min-height: 100vh;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-primary);
+}
+
+/* ── Range Input (global) ── */
+input[type="range"] {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-primary);
+  outline: none;
+  border-radius: 2px;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent-primary);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  background: var(--accent-tertiary);
+  transform: scale(1.2);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--accent-primary);
+  cursor: pointer;
+  border-radius: 50%;
+  border: none;
 }
