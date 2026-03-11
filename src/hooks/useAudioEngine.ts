@@ -35,9 +35,7 @@ export function useAudioEngine() {
   const modulatorsRef = useRef(modulators);
   modulatorsRef.current = modulators;
 
-  /* ── Re-apply modulation whenever routes/modulators/playing change.
-       clearAllRoutes in the cleanup restores baselines so the source
-       returns to its user-set values when routes are removed. ── */
+  /* ── Re-apply modulation whenever routes/modulators/playing change. ── */
   useEffect(() => {
     if (!isPlaying || !engineRef.current) return;
     engineRef.current.applyRoutes(routes, modulators, soundSources);
@@ -73,6 +71,63 @@ export function useAudioEngine() {
         prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
       );
       getEngine().updateSource(id, updates);
+    },
+    [getEngine],
+  );
+
+  /** Load an audio file into a sampler source. Returns the duration. */
+  const loadAudioFile = useCallback(
+    async (id: string, file: File) => {
+      const engine = getEngine();
+      const url = URL.createObjectURL(file);
+
+      // Ensure the source exists in the engine
+      const source = sourcesRef.current.find((s) => s.id === id);
+      if (source && !engine["sources"].has(id)) {
+        engine.addSource(source);
+      }
+
+      const duration = await engine.loadSampleBuffer(id, url);
+      URL.revokeObjectURL(url);
+
+      setSoundSources((prev) =>
+        prev.map((s) =>
+          s.id === id
+            ? { ...s, audioFileName: file.name, audioFileUrl: url, sampleEnd: 1 }
+            : s,
+        ),
+      );
+
+      return duration;
+    },
+    [getEngine],
+  );
+
+  /**
+   * Switch a source between oscillator and sampler mode.
+   * Tears down the old engine nodes and rebuilds for the new type.
+   */
+  const changeSourceType = useCallback(
+    (id: string, sourceType: SoundSource["sourceType"]) => {
+      const engine = getEngine();
+      const wasPlaying = isPlayingRef.current;
+
+      // Remove old engine nodes
+      engine.removeSource(id);
+
+      // Update state
+      setSoundSources((prev) =>
+        prev.map((s) => {
+          if (s.id !== id) return s;
+          const updated = { ...s, sourceType };
+          // Re-add with new type
+          engine.addSource(updated);
+          if (wasPlaying && updated.sourceType === "oscillator") {
+            engine.startSource(updated);
+          }
+          return updated;
+        }),
+      );
     },
     [getEngine],
   );
@@ -175,5 +230,7 @@ export function useAudioEngine() {
     deleteRoute,
     changeMasterVolume,
     togglePlayback,
+    loadAudioFile,
+    changeSourceType,
   };
 }

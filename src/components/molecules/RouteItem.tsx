@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { Slider } from "@/components/atoms/Slider";
 import { Select } from "@/components/atoms/Select";
 import { Button } from "@/components/atoms/Button";
@@ -12,12 +12,22 @@ import type {
 } from "@/types/sound";
 import { getDefaultRange } from "@/types/sound";
 
-const PARAMETER_OPTIONS = [
-  { label: "Frequency", value: "frequency" },
+const SHARED_PARAMS = [
   { label: "Volume", value: "volume" },
   { label: "Pan", value: "pan" },
   { label: "Reverb Mix", value: "reverbMix" },
   { label: "Delay Mix", value: "delayMix" },
+];
+
+const OSCILLATOR_PARAMS = [
+  { label: "Frequency", value: "frequency" },
+  ...SHARED_PARAMS,
+];
+
+const SAMPLER_PARAMS = [
+  ...SHARED_PARAMS,
+  { label: "Speed", value: "playbackRate" },
+  { label: "Pitch Shift", value: "pitchShift" },
 ];
 
 interface RouteItemProps {
@@ -42,13 +52,36 @@ export function RouteItem({
   const modulator = modulators.find((m) => m.id === route.modulatorId);
 
   const sourceOptions = soundSources.map((s) => ({
-    label: s.name,
+    label: `${s.name} (${s.sourceType === "sampler" ? "S" : "O"})`,
     value: s.id,
   }));
   const modulatorOptions = modulators.map((m) => ({
     label: m.name,
     value: m.id,
   }));
+
+  const parameterOptions = useMemo(() => {
+    if (!source || source.sourceType === "oscillator") return OSCILLATOR_PARAMS;
+    return SAMPLER_PARAMS;
+  }, [source]);
+
+  // Show min/max range controls for frequency, playbackRate, and pitchShift
+  const showRange = route.parameter === "frequency"
+    || route.parameter === "playbackRate"
+    || route.parameter === "pitchShift";
+
+  const rangeConfig = useMemo(() => {
+    switch (route.parameter) {
+      case "frequency":
+        return { minBound: 20, maxBound: 2000, step: 1, format: (v: number) => `${v.toFixed(0)} Hz` };
+      case "playbackRate":
+        return { minBound: 0.1, maxBound: 4, step: 0.01, format: (v: number) => `${v.toFixed(2)}x` };
+      case "pitchShift":
+        return { minBound: -24, maxBound: 24, step: 1, format: (v: number) => `${v > 0 ? "+" : ""}${v} st` };
+      default:
+        return null;
+    }
+  }, [route.parameter]);
 
   return (
     <div className="bg-bg-tertiary border border-border-color rounded-md p-3 flex flex-col gap-3">
@@ -86,14 +119,29 @@ export function RouteItem({
         label="Sound Source"
         value={route.sourceId}
         options={sourceOptions}
-        onChange={(v) => onUpdate(route.id, { sourceId: v })}
+        onChange={(v) => {
+          const newSource = soundSources.find((s) => s.id === v);
+          const updates: Partial<Route> = { sourceId: v };
+          // Reset parameter if the current one isn't valid for the new source type
+          if (newSource) {
+            const validParams = newSource.sourceType === "sampler" ? SAMPLER_PARAMS : OSCILLATOR_PARAMS;
+            if (!validParams.some((p) => p.value === route.parameter)) {
+              const newParam = validParams[0].value as RoutableParam;
+              const defaults = getDefaultRange(newParam);
+              updates.parameter = newParam;
+              updates.min = defaults.min;
+              updates.max = defaults.max;
+            }
+          }
+          onUpdate(route.id, updates);
+        }}
       />
 
       {/* Parameter selector */}
       <Select
         label="Parameter"
         value={route.parameter}
-        options={PARAMETER_OPTIONS}
+        options={parameterOptions}
         onChange={(v) => {
           const param = v as RoutableParam;
           const defaults = getDefaultRange(param);
@@ -116,26 +164,25 @@ export function RouteItem({
         onChange={(v) => onUpdate(route.id, { depth: v })}
       />
 
-      {/* Min/Max controls (only for frequency — the other params use
-          fixed 0..1 or -1..1 ranges that are already sensible) */}
-      {route.parameter === "frequency" && (
+      {/* Min/Max range controls for applicable params */}
+      {showRange && rangeConfig && (
         <>
           <Slider
-            label="Min Frequency"
+            label={`Min ${route.parameter}`}
             value={route.min}
-            min={20}
-            max={2000}
-            step={1}
-            formatValue={(v) => `${v.toFixed(0)} Hz`}
+            min={rangeConfig.minBound}
+            max={rangeConfig.maxBound}
+            step={rangeConfig.step}
+            formatValue={rangeConfig.format}
             onChange={(v) => onUpdate(route.id, { min: v })}
           />
           <Slider
-            label="Max Frequency"
+            label={`Max ${route.parameter}`}
             value={route.max}
-            min={20}
-            max={2000}
-            step={1}
-            formatValue={(v) => `${v.toFixed(0)} Hz`}
+            min={rangeConfig.minBound}
+            max={rangeConfig.maxBound}
+            step={rangeConfig.step}
+            formatValue={rangeConfig.format}
             onChange={(v) => onUpdate(route.id, { max: v })}
           />
         </>

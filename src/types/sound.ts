@@ -1,10 +1,25 @@
 export type Waveform = "sine" | "square" | "sawtooth" | "triangle";
 
+export type SourceType = "oscillator" | "sampler";
+
+export type LoopMode = "none" | "loop" | "pingpong";
+
 export interface SoundSource {
   id: string;
   name: string;
+  sourceType: SourceType;
+  // Oscillator fields
   waveform: Waveform;
   frequency: number;
+  // Sampler fields
+  audioFileUrl: string | null;
+  audioFileName: string | null;
+  sampleStart: number;
+  sampleEnd: number;
+  loopMode: LoopMode;
+  pitchShift: number;
+  playbackRate: number;
+  // Shared fields
   volume: number;
   pan: number;
   reverbMix: number;
@@ -16,8 +31,16 @@ export function createSoundSource(index: number): SoundSource {
   return {
     id: Date.now().toString(),
     name: `Source ${index + 1}`,
+    sourceType: "oscillator",
     waveform: "sine",
     frequency: 440,
+    audioFileUrl: null,
+    audioFileName: null,
+    sampleStart: 0,
+    sampleEnd: 1,
+    loopMode: "none",
+    pitchShift: 0,
+    playbackRate: 1,
     volume: -12,
     pan: 0,
     reverbMix: 0,
@@ -67,7 +90,9 @@ export type RoutableParam =
   | "volume"
   | "pan"
   | "reverbMix"
-  | "delayMix";
+  | "delayMix"
+  | "playbackRate"
+  | "pitchShift";
 
 export interface Route {
   id: string;
@@ -111,5 +136,9 @@ export function getDefaultRange(param: RoutableParam): { min: number; max: numbe
       return { min: 0, max: 1 };
     case "delayMix":
       return { min: 0, max: 1 };
+    case "playbackRate":
+      return { min: 0.5, max: 2 };
+    case "pitchShift":
+      return { min: -12, max: 12 };
   }
 }

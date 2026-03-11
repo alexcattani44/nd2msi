@@ -25,6 +25,8 @@ export default function Home() {
     deleteRoute,
     changeMasterVolume,
     togglePlayback,
+    loadAudioFile,
+    changeSourceType,
   } = useAudioEngine();
 
   return (
@@ -70,6 +72,8 @@ export default function Home() {
           onUpdateSource={updateSource}
           onDeleteSource={deleteSource}
           onMasterVolumeChange={changeMasterVolume}
+          onChangeSourceType={changeSourceType}
+          onLoadAudioFile={loadAudioFile}
         />
 
         {/* Center: Routing Matrix */}

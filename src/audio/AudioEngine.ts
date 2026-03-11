@@ -9,21 +9,22 @@ import type {
 
 /**
  * Tone.js node graph per source:
+ *
+ * Oscillator mode:
  *   Synth ──┬──▶ Reverb ──┐
  *           └──▶ Delay  ──┤
  *                          ▼
  *                       Panner ──▶ Volume ──▶ master
  *
- * Modulation approach (data-driven):
- *   We use a setInterval loop that writes values directly into the
- *   Tone.js param. When the route is torn down we restore the
- *   source's baseline value so the sound source keeps working.
- *
- * Modulation approach (LFO):
- *   We use a Tone.js LFO node that is connected to the target param
- *   via Tone's signal graph. On teardown we disconnect + restore baseline.
+ * Sampler mode:
+ *   Player ──▶ PitchShift ──┬──▶ Reverb ──┐
+ *                            └──▶ Delay  ──┤
+ *                                           ▼
+ *                                        Panner ──▶ Volume ──▶ master
  */
-interface SourceNodes {
+
+interface OscillatorNodes {
+  type: "oscillator";
   synth: Tone.Synth;
   reverb: Tone.Reverb;
   delay: Tone.FeedbackDelay;
@@ -32,16 +33,30 @@ interface SourceNodes {
   playing: boolean;
 }
 
-/** Stored baseline values for a source so we can restore after modulation. */
+interface SamplerNodes {
+  type: "sampler";
+  player: Tone.Player;
+  pitchShift: Tone.PitchShift;
+  reverb: Tone.Reverb;
+  delay: Tone.FeedbackDelay;
+  panner: Tone.Panner;
+  volume: Tone.Volume;
+  playing: boolean;
+  loaded: boolean;
+}
+
+type SourceNodes = OscillatorNodes | SamplerNodes;
+
 interface BaselineValues {
   frequency: number;
   volume: number;
   pan: number;
   reverbMix: number;
   delayMix: number;
+  playbackRate: number;
+  pitchShift: number;
 }
 
-/** Teardown handle for an active route. */
 interface ActiveRoute {
   disconnect(): void;
 }
@@ -49,7 +64,6 @@ interface ActiveRoute {
 export class AudioEngine {
   private master: Tone.Volume;
   private sources: Map<string, SourceNodes> = new Map();
-  /** Baseline param values per source, captured from SoundSource state. */
   private baselines: Map<string, BaselineValues> = new Map();
   private lfos: Map<string, Tone.LFO> = new Map();
   private activeRoutes: Map<string, ActiveRoute> = new Map();
@@ -107,30 +121,58 @@ export class AudioEngine {
     panner.connect(volume);
     volume.connect(this.master);
 
-    const synth = new Tone.Synth({
-      oscillator: { type: source.waveform },
-      envelope: { attack: 0.1, decay: 0.2, sustain: 0.5, release: 1 },
-    });
-    synth.frequency.value = source.frequency;
-    synth.connect(reverb);
-    synth.connect(delay);
+    if (source.sourceType === "sampler") {
+      const pitchShiftNode = new Tone.PitchShift({
+        pitch: source.pitchShift,
+      });
+      const player = new Tone.Player({
+        loop: source.loopMode !== "none",
+        playbackRate: source.playbackRate,
+      });
 
-    this.sources.set(source.id, {
-      synth,
-      reverb,
-      delay,
-      panner,
-      volume,
-      playing: false,
-    });
+      player.connect(pitchShiftNode);
+      pitchShiftNode.connect(reverb);
+      pitchShiftNode.connect(delay);
 
-    // Store baseline
+      this.sources.set(source.id, {
+        type: "sampler",
+        player,
+        pitchShift: pitchShiftNode,
+        reverb,
+        delay,
+        panner,
+        volume,
+        playing: false,
+        loaded: false,
+      });
+    } else {
+      const synth = new Tone.Synth({
+        oscillator: { type: source.waveform },
+        envelope: { attack: 0.1, decay: 0.2, sustain: 0.5, release: 1 },
+      });
+      synth.frequency.value = source.frequency;
+      synth.connect(reverb);
+      synth.connect(delay);
+
+      this.sources.set(source.id, {
+        type: "oscillator",
+        synth,
+        reverb,
+        delay,
+        panner,
+        volume,
+        playing: false,
+      });
+    }
+
     this.baselines.set(source.id, {
       frequency: source.frequency,
       volume: source.volume,
       pan: source.pan,
       reverbMix: source.reverbMix,
       delayMix: source.delayMix,
+      playbackRate: source.playbackRate,
+      pitchShift: source.pitchShift,
     });
   }
 
@@ -138,7 +180,11 @@ export class AudioEngine {
     const nodes = this.sources.get(id);
     if (!nodes) return;
     if (nodes.playing) {
-      nodes.synth.triggerRelease();
+      if (nodes.type === "oscillator") {
+        nodes.synth.triggerRelease();
+      } else {
+        nodes.player.stop();
+      }
     }
     this.disposeSourceNodes(nodes);
     this.sources.delete(id);
@@ -149,16 +195,9 @@ export class AudioEngine {
     const nodes = this.sources.get(id);
     if (!nodes) return;
 
-    // Also update baseline so restore uses the latest user-set values
     const baseline = this.baselines.get(id);
 
-    if (updates.waveform !== undefined) {
-      nodes.synth.oscillator.type = updates.waveform as Waveform;
-    }
-    if (updates.frequency !== undefined) {
-      nodes.synth.frequency.value = updates.frequency;
-      if (baseline) baseline.frequency = updates.frequency;
-    }
+    // Shared params
     if (updates.volume !== undefined) {
       nodes.volume.volume.value = updates.volume;
       if (baseline) baseline.volume = updates.volume;
@@ -178,6 +217,52 @@ export class AudioEngine {
     if (updates.delayTime !== undefined) {
       nodes.delay.delayTime.value = updates.delayTime;
     }
+
+    // Oscillator-specific
+    if (nodes.type === "oscillator") {
+      if (updates.waveform !== undefined) {
+        nodes.synth.oscillator.type = updates.waveform as Waveform;
+      }
+      if (updates.frequency !== undefined) {
+        nodes.synth.frequency.value = updates.frequency;
+        if (baseline) baseline.frequency = updates.frequency;
+      }
+    }
+
+    // Sampler-specific
+    if (nodes.type === "sampler") {
+      if (updates.playbackRate !== undefined) {
+        nodes.player.playbackRate = updates.playbackRate;
+        if (baseline) baseline.playbackRate = updates.playbackRate;
+      }
+      if (updates.pitchShift !== undefined) {
+        nodes.pitchShift.pitch = updates.pitchShift;
+        if (baseline) baseline.pitchShift = updates.pitchShift;
+      }
+      if (updates.loopMode !== undefined) {
+        nodes.player.loop = updates.loopMode !== "none";
+        if (updates.loopMode === "pingpong") {
+          nodes.player.reverse = false; // pingpong handled via custom logic
+        }
+      }
+      if (updates.sampleStart !== undefined && nodes.loaded) {
+        nodes.player.loopStart = updates.sampleStart * nodes.player.buffer.duration;
+      }
+      if (updates.sampleEnd !== undefined && nodes.loaded) {
+        nodes.player.loopEnd = updates.sampleEnd * nodes.player.buffer.duration;
+      }
+    }
+  }
+
+  /** Load an audio file into a sampler source from a blob URL or data URL */
+  async loadSampleBuffer(id: string, url: string): Promise<number> {
+    const nodes = this.sources.get(id);
+    if (!nodes || nodes.type !== "sampler") return 0;
+
+    const buffer = await Tone.ToneAudioBuffer.fromUrl(url);
+    nodes.player.buffer = buffer;
+    nodes.loaded = true;
+    return buffer.duration;
   }
 
   /* ── modulator management ── */
@@ -218,12 +303,6 @@ export class AudioEngine {
 
   /* ── route / modulation ── */
 
-  /**
-   * Re-apply all routes. Called by the hook's useEffect whenever routes,
-   * modulators, sources, or playing state change.
-   * Only the *last* route per (sourceId, parameter) pair wins —
-   * this prevents stacking that shifts base values.
-   */
   applyRoutes(
     routes: Route[],
     modulators: Modulator[],
@@ -231,7 +310,6 @@ export class AudioEngine {
   ): void {
     this.clearAllRoutes();
 
-    // Refresh baselines from current source state
     for (const source of sources) {
       this.baselines.set(source.id, {
         frequency: source.frequency,
@@ -239,10 +317,11 @@ export class AudioEngine {
         pan: source.pan,
         reverbMix: source.reverbMix,
         delayMix: source.delayMix,
+        playbackRate: source.playbackRate,
+        pitchShift: source.pitchShift,
       });
     }
 
-    // De-dupe: keep only the last route per (sourceId, param) pair
     const effective = new Map<string, Route>();
     for (const route of routes) {
       const key = `${route.sourceId}:${route.parameter}`;
@@ -256,6 +335,10 @@ export class AudioEngine {
 
       const nodes = this.sources.get(route.sourceId);
       if (!nodes) continue;
+
+      // Skip oscillator-only params on sampler sources and vice versa
+      if (nodes.type === "sampler" && route.parameter === "frequency") continue;
+      if (nodes.type === "oscillator" && (route.parameter === "playbackRate" || route.parameter === "pitchShift")) continue;
 
       if (mod.type === "lfo") {
         this.applyLfoRoute(route, mod, nodes);
@@ -291,7 +374,12 @@ export class AudioEngine {
       }
       const nodes = this.sources.get(source.id)!;
       if (!nodes.playing) {
-        nodes.synth.triggerAttack(source.frequency);
+        if (nodes.type === "oscillator") {
+          nodes.synth.triggerAttack(source.frequency);
+        } else if (nodes.loaded) {
+          const startOffset = source.sampleStart * nodes.player.buffer.duration;
+          nodes.player.start(undefined, startOffset);
+        }
         nodes.playing = true;
       }
     }
@@ -304,7 +392,12 @@ export class AudioEngine {
     }
     const nodes = this.sources.get(source.id)!;
     if (!nodes.playing) {
-      nodes.synth.triggerAttack(source.frequency);
+      if (nodes.type === "oscillator") {
+        nodes.synth.triggerAttack(source.frequency);
+      } else if (nodes.loaded) {
+        const startOffset = source.sampleStart * nodes.player.buffer.duration;
+        nodes.player.start(undefined, startOffset);
+      }
       nodes.playing = true;
     }
   }
@@ -312,7 +405,11 @@ export class AudioEngine {
   stopAll(): void {
     for (const nodes of this.sources.values()) {
       if (nodes.playing) {
-        nodes.synth.triggerRelease();
+        if (nodes.type === "oscillator") {
+          nodes.synth.triggerRelease();
+        } else {
+          nodes.player.stop();
+        }
         nodes.playing = false;
       }
     }
@@ -320,10 +417,6 @@ export class AudioEngine {
 
   /* ── internal: restore baseline ── */
 
-  /**
-   * Write the user-set value back into the Tone node for a given param.
-   * Called when a route is torn down so the source returns to normal.
-   */
   private restoreBaseline(sourceId: string, param: RoutableParam): void {
     const nodes = this.sources.get(sourceId);
     const baseline = this.baselines.get(sourceId);
@@ -331,7 +424,9 @@ export class AudioEngine {
 
     switch (param) {
       case "frequency":
-        nodes.synth.frequency.value = baseline.frequency;
+        if (nodes.type === "oscillator") {
+          nodes.synth.frequency.value = baseline.frequency;
+        }
         break;
       case "volume":
         nodes.volume.volume.value = baseline.volume;
@@ -344,6 +439,16 @@ export class AudioEngine {
         break;
       case "delayMix":
         nodes.delay.wet.value = baseline.delayMix;
+        break;
+      case "playbackRate":
+        if (nodes.type === "sampler") {
+          nodes.player.playbackRate = baseline.playbackRate;
+        }
+        break;
+      case "pitchShift":
+        if (nodes.type === "sampler") {
+          nodes.pitchShift.pitch = baseline.pitchShift;
+        }
         break;
     }
   }
@@ -386,8 +491,6 @@ export class AudioEngine {
     const depth = route.depth;
     const { min, max } = route;
 
-    // For all params: modulate between min..max, scaled by depth.
-    // depth=1 → full range, depth=0 → no modulation (midpoint).
     const mid = (min + max) / 2;
     const halfRange = ((max - min) / 2) * depth;
     lfo.min = mid - halfRange;
@@ -412,7 +515,6 @@ export class AudioEngine {
 
     const intervalId = setInterval(() => {
       const raw = data[dataIndex];
-      // Normalize to 0..1
       const normalized = (raw - dataMin) / dataRange;
 
       this.writeModulatedValue(route, normalized * route.depth, nodes);
@@ -434,7 +536,7 @@ export class AudioEngine {
   private getTargetParam(param: RoutableParam, nodes: SourceNodes): any {
     switch (param) {
       case "frequency":
-        return nodes.synth.frequency;
+        return nodes.type === "oscillator" ? nodes.synth.frequency : null;
       case "volume":
         return nodes.volume.volume;
       case "pan":
@@ -443,15 +545,16 @@ export class AudioEngine {
         return nodes.reverb.wet;
       case "delayMix":
         return nodes.delay.wet;
+      case "playbackRate":
+        // playbackRate is not a Tone.Signal, handle via data route only
+        return null;
+      case "pitchShift":
+        return nodes.type === "sampler" ? nodes.pitchShift.pitch : null;
       default:
         return null;
     }
   }
 
-  /**
-   * Write a modulated value using the route's min/max range.
-   * `t` is 0..1 (already multiplied by depth).
-   */
   private writeModulatedValue(
     route: Route,
     t: number,
@@ -462,11 +565,11 @@ export class AudioEngine {
 
     switch (route.parameter) {
       case "frequency":
-        // Clamp to audible range
-        nodes.synth.frequency.value = Math.max(20, Math.min(20000, value));
+        if (nodes.type === "oscillator") {
+          nodes.synth.frequency.value = Math.max(20, Math.min(20000, value));
+        }
         break;
       case "volume":
-        // Clamp to reasonable dB range (avoid -Infinity or extreme values)
         nodes.volume.volume.value = Math.max(-60, Math.min(0, value));
         break;
       case "pan":
@@ -478,11 +581,26 @@ export class AudioEngine {
       case "delayMix":
         nodes.delay.wet.value = Math.max(0, Math.min(1, value));
         break;
+      case "playbackRate":
+        if (nodes.type === "sampler") {
+          nodes.player.playbackRate = Math.max(0.1, Math.min(4, value));
+        }
+        break;
+      case "pitchShift":
+        if (nodes.type === "sampler") {
+          nodes.pitchShift.pitch = Math.max(-24, Math.min(24, value));
+        }
+        break;
     }
   }
 
   private disposeSourceNodes(nodes: SourceNodes): void {
-    try { nodes.synth.dispose(); } catch { /* already disposed */ }
+    if (nodes.type === "oscillator") {
+      try { nodes.synth.dispose(); } catch { /* already disposed */ }
+    } else {
+      try { nodes.player.dispose(); } catch { /* already disposed */ }
+      try { nodes.pitchShift.dispose(); } catch { /* already disposed */ }
+    }
     try { nodes.reverb.dispose(); } catch { /* already disposed */ }
     try { nodes.delay.dispose(); } catch { /* already disposed */ }
     try { nodes.panner.dispose(); } catch { /* already disposed */ }
