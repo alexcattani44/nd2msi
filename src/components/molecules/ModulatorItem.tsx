@@ -17,6 +17,15 @@ const SHAPE_OPTIONS = [
 const TYPE_OPTIONS = [
   { label: "LFO", value: "lfo" },
   { label: "Data-Driven", value: "data" },
+  { label: "Envelope", value: "envelope" },
+];
+
+const MIDI_CHANNEL_OPTIONS = [
+  { label: "All Channels", value: "0" },
+  ...Array.from({ length: 16 }, (_, i) => ({
+    label: `Channel ${i + 1}`,
+    value: String(i + 1),
+  })),
 ];
 
 interface ModulatorItemProps {
@@ -224,7 +233,55 @@ export function ModulatorItem({
         </>
       )}
 
-      {/* Depth (shared by both types) */}
+      {/* Envelope (ADSR) controls */}
+      {modulator.type === "envelope" && (
+        <>
+          <Slider
+            label="Attack"
+            value={modulator.attack}
+            min={0.001}
+            max={5}
+            step={0.001}
+            formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
+            onChange={(v) => onUpdate(modulator.id, { attack: v })}
+          />
+          <Slider
+            label="Decay"
+            value={modulator.decay}
+            min={0.001}
+            max={5}
+            step={0.001}
+            formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
+            onChange={(v) => onUpdate(modulator.id, { decay: v })}
+          />
+          <Slider
+            label="Sustain"
+            value={modulator.sustain}
+            min={0}
+            max={1}
+            step={0.01}
+            formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+            onChange={(v) => onUpdate(modulator.id, { sustain: v })}
+          />
+          <Slider
+            label="Release"
+            value={modulator.release}
+            min={0.001}
+            max={10}
+            step={0.001}
+            formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
+            onChange={(v) => onUpdate(modulator.id, { release: v })}
+          />
+          <Select
+            label="MIDI Channel"
+            value={String(modulator.midiChannel)}
+            options={MIDI_CHANNEL_OPTIONS}
+            onChange={(v) => onUpdate(modulator.id, { midiChannel: parseInt(v) })}
+          />
+        </>
+      )}
+
+      {/* Depth (shared by all types) */}
       <Slider
         label="Depth"
         value={modulator.depth}

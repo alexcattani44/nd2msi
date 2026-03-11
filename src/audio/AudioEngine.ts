@@ -61,12 +61,34 @@ interface ActiveRoute {
   disconnect(): void;
 }
 
+interface EnvelopeState {
+  /** Current envelope output value 0..1 */
+  value: number;
+  /** Phase: idle, attack, decay, sustain, release */
+  phase: "idle" | "attack" | "decay" | "sustain" | "release";
+  /** Timestamp when current phase started */
+  phaseStart: number;
+  /** ADSR params snapshot */
+  attack: number;
+  decay: number;
+  sustain: number;
+  release: number;
+  /** Animation frame id */
+  rafId: number | null;
+}
+
+export type MidiNoteCallback = (channel: number, note: number, velocity: number, isNoteOn: boolean) => void;
+
 export class AudioEngine {
   private master: Tone.Volume;
   private sources: Map<string, SourceNodes> = new Map();
   private baselines: Map<string, BaselineValues> = new Map();
   private lfos: Map<string, Tone.LFO> = new Map();
   private activeRoutes: Map<string, ActiveRoute> = new Map();
+  private envelopes: Map<string, EnvelopeState> = new Map();
+  private midiAccess: MIDIAccess | null = null;
+  private midiListeners: Map<string, MidiNoteCallback> = new Map();
+  private midiInputHandler: ((e: Event) => void) | null = null;
   private started = false;
 
   constructor(masterVolumeDb: number) {
@@ -94,6 +116,17 @@ export class AudioEngine {
       try { lfo.dispose(); } catch { /* ok */ }
     }
     this.lfos.clear();
+    for (const env of this.envelopes.values()) {
+      if (env.rafId) cancelAnimationFrame(env.rafId);
+    }
+    this.envelopes.clear();
+    this.midiListeners.clear();
+    if (this.midiAccess && this.midiInputHandler) {
+      for (const input of this.midiAccess.inputs.values()) {
+        input.removeEventListener("midimessage", this.midiInputHandler);
+      }
+    }
+    this.midiAccess = null;
     this.master.dispose();
   }
 
@@ -101,6 +134,146 @@ export class AudioEngine {
 
   setMasterVolume(db: number): void {
     this.master.volume.value = db;
+  }
+
+  /* ── MIDI ── */
+
+  async initMidi(): Promise<boolean> {
+    if (this.midiAccess) return true;
+    if (!navigator.requestMIDIAccess) return false;
+    try {
+      this.midiAccess = await navigator.requestMIDIAccess();
+      this.midiInputHandler = (e: Event) => {
+        const msg = e as MIDIMessageEvent;
+        const data = msg.data;
+        if (!data || data.length < 3) return;
+        const status = data[0] & 0xf0;
+        const channel = (data[0] & 0x0f) + 1; // 1-16
+        const note = data[1];
+        const velocity = data[2];
+
+        if (status === 0x90 || status === 0x80) {
+          const isNoteOn = status === 0x90 && velocity > 0;
+          for (const cb of this.midiListeners.values()) {
+            cb(channel, note, velocity, isNoteOn);
+          }
+        }
+      };
+      for (const input of this.midiAccess.inputs.values()) {
+        input.addEventListener("midimessage", this.midiInputHandler);
+      }
+      // Handle hotplug
+      this.midiAccess.addEventListener("statechange", () => {
+        if (!this.midiAccess || !this.midiInputHandler) return;
+        for (const input of this.midiAccess.inputs.values()) {
+          input.removeEventListener("midimessage", this.midiInputHandler);
+          input.addEventListener("midimessage", this.midiInputHandler);
+        }
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  onMidiNote(id: string, callback: MidiNoteCallback): void {
+    this.midiListeners.set(id, callback);
+  }
+
+  offMidiNote(id: string): void {
+    this.midiListeners.delete(id);
+  }
+
+  /* ── envelope helpers ── */
+
+  triggerEnvelopeAttack(modId: string, attack: number, decay: number, sustain: number, release: number): void {
+    const existing = this.envelopes.get(modId);
+    if (existing?.rafId) cancelAnimationFrame(existing.rafId);
+
+    this.envelopes.set(modId, {
+      value: 0,
+      phase: "attack",
+      phaseStart: performance.now() / 1000,
+      attack,
+      decay,
+      sustain,
+      release,
+      rafId: null,
+    });
+  }
+
+  triggerEnvelopeRelease(modId: string): void {
+    const env = this.envelopes.get(modId);
+    if (!env || env.phase === "idle" || env.phase === "release") return;
+    env.phase = "release";
+    env.phaseStart = performance.now() / 1000;
+  }
+
+  /** Compute envelope value at current time. Returns 0..1 */
+  getEnvelopeValue(modId: string): number {
+    const env = this.envelopes.get(modId);
+    if (!env || env.phase === "idle") return 0;
+
+    const now = performance.now() / 1000;
+    const elapsed = now - env.phaseStart;
+
+    switch (env.phase) {
+      case "attack": {
+        if (env.attack <= 0) {
+          env.value = 1;
+          env.phase = "decay";
+          env.phaseStart = now;
+          return 1;
+        }
+        const t = elapsed / env.attack;
+        if (t >= 1) {
+          env.value = 1;
+          env.phase = "decay";
+          env.phaseStart = now;
+          return 1;
+        }
+        env.value = t;
+        return t;
+      }
+      case "decay": {
+        if (env.decay <= 0) {
+          env.value = env.sustain;
+          env.phase = "sustain";
+          env.phaseStart = now;
+          return env.sustain;
+        }
+        const t = elapsed / env.decay;
+        if (t >= 1) {
+          env.value = env.sustain;
+          env.phase = "sustain";
+          env.phaseStart = now;
+          return env.sustain;
+        }
+        env.value = 1 - (1 - env.sustain) * t;
+        return env.value;
+      }
+      case "sustain":
+        env.value = env.sustain;
+        return env.sustain;
+      case "release": {
+        if (env.release <= 0) {
+          env.value = 0;
+          env.phase = "idle";
+          return 0;
+        }
+        const startVal = env.value;
+        const t = elapsed / env.release;
+        if (t >= 1) {
+          env.value = 0;
+          env.phase = "idle";
+          return 0;
+        }
+        env.value = startVal * (1 - t);
+        return env.value;
+      }
+      default:
+        return 0;
+    }
   }
 
   /* ── source management ── */
@@ -268,11 +441,22 @@ export class AudioEngine {
   /* ── modulator management ── */
 
   addModulator(mod: Modulator): void {
-    if (this.lfos.has(mod.id)) return;
     if (mod.type === "lfo") {
+      if (this.lfos.has(mod.id)) return;
       const lfo = new Tone.LFO(mod.rate, 0, 1);
       lfo.type = mod.shape;
       this.lfos.set(mod.id, lfo);
+    } else if (mod.type === "envelope") {
+      this.envelopes.set(mod.id, {
+        value: 0,
+        phase: "idle",
+        phaseStart: 0,
+        attack: mod.attack,
+        decay: mod.decay,
+        sustain: mod.sustain,
+        release: mod.release,
+        rafId: null,
+      });
     }
   }
 
@@ -282,6 +466,12 @@ export class AudioEngine {
       try { lfo.stop(); lfo.dispose(); } catch { /* ok */ }
       this.lfos.delete(id);
     }
+    const env = this.envelopes.get(id);
+    if (env) {
+      if (env.rafId) cancelAnimationFrame(env.rafId);
+      this.envelopes.delete(id);
+    }
+    this.offMidiNote(id);
   }
 
   updateModulator(id: string, updates: Partial<Modulator>): void {
@@ -290,14 +480,46 @@ export class AudioEngine {
       if (updates.rate !== undefined) lfo.frequency.value = updates.rate;
       if (updates.shape !== undefined) lfo.type = updates.shape;
     }
-    if (updates.type === "data" && lfo) {
+    // Switching away from LFO
+    if (updates.type && updates.type !== "lfo" && lfo) {
       try { lfo.stop(); lfo.dispose(); } catch { /* ok */ }
       this.lfos.delete(id);
     }
+    // Switching away from envelope
+    if (updates.type && updates.type !== "envelope") {
+      const env = this.envelopes.get(id);
+      if (env) {
+        if (env.rafId) cancelAnimationFrame(env.rafId);
+        this.envelopes.delete(id);
+      }
+      this.offMidiNote(id);
+    }
+    // Switching to LFO
     if (updates.type === "lfo" && !this.lfos.has(id)) {
       const newLfo = new Tone.LFO(updates.rate ?? 1, 0, 1);
       newLfo.type = (updates.shape as Waveform) ?? "sine";
       this.lfos.set(id, newLfo);
+    }
+    // Switching to envelope
+    if (updates.type === "envelope" && !this.envelopes.has(id)) {
+      this.envelopes.set(id, {
+        value: 0,
+        phase: "idle",
+        phaseStart: 0,
+        attack: updates.attack ?? 0.1,
+        decay: updates.decay ?? 0.2,
+        sustain: updates.sustain ?? 0.7,
+        release: updates.release ?? 0.5,
+        rafId: null,
+      });
+    }
+    // Update envelope ADSR params
+    const env = this.envelopes.get(id);
+    if (env) {
+      if (updates.attack !== undefined) env.attack = updates.attack;
+      if (updates.decay !== undefined) env.decay = updates.decay;
+      if (updates.sustain !== undefined) env.sustain = updates.sustain;
+      if (updates.release !== undefined) env.release = updates.release;
     }
   }
 
@@ -344,6 +566,8 @@ export class AudioEngine {
         this.applyLfoRoute(route, mod, nodes);
       } else if (mod.type === "data" && mod.data) {
         this.applyDataRoute(route, mod, nodes);
+      } else if (mod.type === "envelope") {
+        this.applyEnvelopeRoute(route, mod, nodes);
       }
     }
   }
@@ -525,6 +749,47 @@ export class AudioEngine {
     this.activeRoutes.set(route.id, {
       disconnect: () => {
         clearInterval(intervalId);
+        this.restoreBaseline(sourceId, param);
+      },
+    });
+  }
+
+  /* ── internal: envelope route ── */
+
+  private applyEnvelopeRoute(
+    route: Route,
+    mod: Modulator,
+    nodes: SourceNodes,
+  ): void {
+    const sourceId = route.sourceId;
+    const param = route.parameter;
+    const modId = mod.id;
+
+    // Set up MIDI listener for this envelope
+    const midiChannel = mod.midiChannel; // 0 = all, 1-16 = specific
+    this.onMidiNote(modId, (channel, _note, _velocity, isNoteOn) => {
+      if (midiChannel !== 0 && channel !== midiChannel) return;
+      if (isNoteOn) {
+        this.triggerEnvelopeAttack(modId, mod.attack, mod.decay, mod.sustain, mod.release);
+      } else {
+        this.triggerEnvelopeRelease(modId);
+      }
+    });
+
+    // Poll envelope value at ~60fps and write to target parameter
+    let running = true;
+    const tick = () => {
+      if (!running) return;
+      const envValue = this.getEnvelopeValue(modId);
+      this.writeModulatedValue(route, envValue * route.depth, nodes);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+
+    this.activeRoutes.set(route.id, {
+      disconnect: () => {
+        running = false;
+        this.offMidiNote(modId);
         this.restoreBaseline(sourceId, param);
       },
     });

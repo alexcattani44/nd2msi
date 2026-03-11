@@ -35,6 +35,20 @@ export function useAudioEngine() {
   const modulatorsRef = useRef(modulators);
   modulatorsRef.current = modulators;
 
+  /* ── Initialize MIDI when an envelope modulator exists ── */
+  const midiInitRef = useRef(false);
+  useEffect(() => {
+    const hasEnvelope = modulators.some((m) => m.type === "envelope");
+    if (hasEnvelope && !midiInitRef.current) {
+      midiInitRef.current = true;
+      getEngine().initMidi().then((ok) => {
+        if (!ok) {
+          console.warn("Web MIDI API not available. Envelope modulators will not respond to MIDI input.");
+        }
+      });
+    }
+  }, [modulators, getEngine]);
+
   /* ── Re-apply modulation whenever routes/modulators/playing change. ── */
   useEffect(() => {
     if (!isPlaying || !engineRef.current) return;

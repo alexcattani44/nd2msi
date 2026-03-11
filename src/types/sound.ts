@@ -51,7 +51,7 @@ export function createSoundSource(index: number): SoundSource {
 
 /* ── Modulators ── */
 
-export type ModulatorType = "lfo" | "data";
+export type ModulatorType = "lfo" | "data" | "envelope";
 
 export interface Modulator {
   id: string;
@@ -65,6 +65,12 @@ export interface Modulator {
   dataMin: number;
   dataMax: number;
   dataLength: number;
+  // ADSR envelope fields
+  attack: number;
+  decay: number;
+  sustain: number;
+  release: number;
+  midiChannel: number; // 1-16, or 0 for "all channels"
 }
 
 export function createModulator(index: number): Modulator {
@@ -80,6 +86,11 @@ export function createModulator(index: number): Modulator {
     dataMin: 0,
     dataMax: 1,
     dataLength: 0,
+    attack: 0.1,
+    decay: 0.2,
+    sustain: 0.7,
+    release: 0.5,
+    midiChannel: 0,
   };
 }
 
