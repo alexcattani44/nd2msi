@@ -25,3 +25,91 @@ export function createSoundSource(index: number): SoundSource {
     delayTime: 0.25,
   };
 }
+
+/* ── Modulators ── */
+
+export type ModulatorType = "lfo" | "data";
+
+export interface Modulator {
+  id: string;
+  name: string;
+  type: ModulatorType;
+  shape: Waveform;
+  rate: number;
+  depth: number;
+  data: number[] | null;
+  dataName: string | null;
+  dataMin: number;
+  dataMax: number;
+  dataLength: number;
+}
+
+export function createModulator(index: number): Modulator {
+  return {
+    id: Date.now().toString(),
+    name: `Modulator ${index + 1}`,
+    type: "lfo",
+    shape: "sine",
+    rate: 1,
+    depth: 0.5,
+    data: null,
+    dataName: null,
+    dataMin: 0,
+    dataMax: 1,
+    dataLength: 0,
+  };
+}
+
+/* ── Routes ── */
+
+export type RoutableParam =
+  | "frequency"
+  | "volume"
+  | "pan"
+  | "reverbMix"
+  | "delayMix";
+
+export interface Route {
+  id: string;
+  sourceId: string;
+  modulatorId: string;
+  parameter: RoutableParam;
+  depth: number;
+  min: number;
+  max: number;
+}
+
+export function createRoute(
+  sourceId: string,
+  modulatorId: string,
+): Route {
+  return {
+    id: Date.now().toString(),
+    sourceId,
+    modulatorId,
+    parameter: "frequency",
+    depth: 0.5,
+    min: 200,
+    max: 800,
+  };
+}
+
+/**
+ * Sensible, audible default ranges per parameter.
+ * Volume stays in -30..0 dB to avoid inaudible silence or clipping.
+ * Pan uses full stereo field. Wet mixes stay 0..1.
+ */
+export function getDefaultRange(param: RoutableParam): { min: number; max: number } {
+  switch (param) {
+    case "frequency":
+      return { min: 200, max: 800 };
+    case "volume":
+      return { min: -30, max: 0 };
+    case "pan":
+      return { min: -1, max: 1 };
+    case "reverbMix":
+      return { min: 0, max: 1 };
+    case "delayMix":
+      return { min: 0, max: 1 };
+  }
+}
