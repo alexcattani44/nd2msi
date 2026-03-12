@@ -4,7 +4,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { Slider } from "@/components/atoms/Slider";
 import { Select } from "@/components/atoms/Select";
 import { Button } from "@/components/atoms/Button";
-import type { Modulator } from "@/types/sound";
+import { Toggle } from "@/components/atoms/Toggle";
+import type { Modulator, LfoShape } from "@/types/sound";
 import Papa from "papaparse";
 
 const SHAPE_OPTIONS = [
@@ -12,6 +13,7 @@ const SHAPE_OPTIONS = [
   { label: "Square", value: "square" },
   { label: "Sawtooth", value: "sawtooth" },
   { label: "Triangle", value: "triangle" },
+  { label: "Random (S&H)", value: "random" },
 ];
 
 const TYPE_OPTIONS = [
@@ -150,15 +152,15 @@ export function ModulatorItem({
             value={modulator.shape}
             options={SHAPE_OPTIONS}
             onChange={(v) =>
-              onUpdate(modulator.id, { shape: v as Modulator["shape"] })
+              onUpdate(modulator.id, { shape: v as LfoShape })
             }
           />
           <Slider
             label="Rate"
             value={modulator.rate}
-            min={0.1}
-            max={10}
-            step={0.1}
+            min={0.01}
+            max={20}
+            step={0.01}
             formatValue={(v) => `${v.toFixed(2)} Hz`}
             onChange={(v) => onUpdate(modulator.id, { rate: v })}
           />

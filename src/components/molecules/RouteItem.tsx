@@ -17,6 +17,7 @@ const SHARED_PARAMS = [
   { label: "Pan", value: "pan" },
   { label: "Reverb Mix", value: "reverbMix" },
   { label: "Delay Mix", value: "delayMix" },
+  { label: "Filter Cutoff", value: "filterFrequency" },
 ];
 
 const OSCILLATOR_PARAMS = [
@@ -34,7 +35,6 @@ interface RouteItemProps {
   route: Route;
   soundSources: SoundSource[];
   modulators: Modulator[];
-  /** true when another route already targets the same source+param */
   isDuplicate: boolean;
   onUpdate: (id: string, updates: Partial<Route>) => void;
   onDelete: (id: string) => void;
@@ -56,7 +56,7 @@ export function RouteItem({
     value: s.id,
   }));
   const modulatorOptions = modulators.map((m) => ({
-    label: m.name,
+    label: `${m.name} (${m.type})`,
     value: m.id,
   }));
 
@@ -65,10 +65,10 @@ export function RouteItem({
     return SAMPLER_PARAMS;
   }, [source]);
 
-  // Show min/max range controls for frequency, playbackRate, and pitchShift
   const showRange = route.parameter === "frequency"
     || route.parameter === "playbackRate"
-    || route.parameter === "pitchShift";
+    || route.parameter === "pitchShift"
+    || route.parameter === "filterFrequency";
 
   const rangeConfig = useMemo(() => {
     switch (route.parameter) {
@@ -78,6 +78,8 @@ export function RouteItem({
         return { minBound: 0.1, maxBound: 4, step: 0.01, format: (v: number) => `${v.toFixed(2)}x` };
       case "pitchShift":
         return { minBound: -24, maxBound: 24, step: 1, format: (v: number) => `${v > 0 ? "+" : ""}${v} st` };
+      case "filterFrequency":
+        return { minBound: 20, maxBound: 20000, step: 1, format: (v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)} kHz` : `${v.toFixed(0)} Hz` };
       default:
         return null;
     }
@@ -85,7 +87,7 @@ export function RouteItem({
 
   return (
     <div className="bg-bg-tertiary border border-border-color rounded-md p-3 flex flex-col gap-3">
-      {/* Header: connection label + delete */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <span className="text-sm text-accent-primary font-mono">
           {modulator?.name ?? "?"} → {source?.name ?? "?"}
@@ -98,7 +100,6 @@ export function RouteItem({
         />
       </div>
 
-      {/* Duplicate warning */}
       {isDuplicate && (
         <div className="text-xs text-danger bg-danger/10 border border-danger/30 rounded p-2">
           Another route already targets {source?.name ?? "this source"}&apos;s{" "}
@@ -106,7 +107,6 @@ export function RouteItem({
         </div>
       )}
 
-      {/* Modulator selector */}
       <Select
         label="Modulator"
         value={route.modulatorId}
@@ -114,7 +114,6 @@ export function RouteItem({
         onChange={(v) => onUpdate(route.id, { modulatorId: v })}
       />
 
-      {/* Source selector */}
       <Select
         label="Sound Source"
         value={route.sourceId}
@@ -122,7 +121,6 @@ export function RouteItem({
         onChange={(v) => {
           const newSource = soundSources.find((s) => s.id === v);
           const updates: Partial<Route> = { sourceId: v };
-          // Reset parameter if the current one isn't valid for the new source type
           if (newSource) {
             const validParams = newSource.sourceType === "sampler" ? SAMPLER_PARAMS : OSCILLATOR_PARAMS;
             if (!validParams.some((p) => p.value === route.parameter)) {
@@ -137,7 +135,6 @@ export function RouteItem({
         }}
       />
 
-      {/* Parameter selector */}
       <Select
         label="Parameter"
         value={route.parameter}
@@ -153,7 +150,6 @@ export function RouteItem({
         }}
       />
 
-      {/* Modulation depth */}
       <Slider
         label="Modulation Depth"
         value={route.depth}
@@ -164,7 +160,6 @@ export function RouteItem({
         onChange={(v) => onUpdate(route.id, { depth: v })}
       />
 
-      {/* Min/Max range controls for applicable params */}
       {showRange && rangeConfig && (
         <>
           <Slider
@@ -188,10 +183,15 @@ export function RouteItem({
         </>
       )}
 
-      {/* Status indicator */}
+      {/* Status indicators */}
       {modulator?.type === "lfo" && (
         <div className="text-xs text-success bg-bg-primary rounded p-2 mt-1">
-          LFO → {route.parameter}
+          LFO ({modulator.shape}) → {route.parameter}
+        </div>
+      )}
+      {modulator?.type === "envelope" && (
+        <div className="text-xs text-success bg-bg-primary rounded p-2 mt-1">
+          Envelope (A:{modulator.attack}s D:{modulator.decay}s S:{(modulator.sustain * 100).toFixed(0)}% R:{modulator.release}s) → {route.parameter}
         </div>
       )}
       {modulator?.type === "data" && modulator.data && (

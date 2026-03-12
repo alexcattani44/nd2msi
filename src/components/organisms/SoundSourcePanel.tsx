@@ -15,6 +15,7 @@ interface SoundSourcePanelProps {
   onMasterVolumeChange: (value: number) => void;
   onChangeSourceType: (id: string, type: SourceType) => void;
   onLoadAudioFile: (id: string, file: File) => void;
+  onNoteOn?: (sourceId: string, frequency: number) => void;
 }
 
 export function SoundSourcePanel({
@@ -26,6 +27,7 @@ export function SoundSourcePanel({
   onMasterVolumeChange,
   onChangeSourceType,
   onLoadAudioFile,
+  onNoteOn,
 }: SoundSourcePanelProps) {
   return (
     <div className="bg-bg-secondary border border-border-color rounded-lg p-4 flex flex-col gap-4 overflow-y-auto">
@@ -55,6 +57,7 @@ export function SoundSourcePanel({
               onDelete={onDeleteSource}
               onChangeType={onChangeSourceType}
               onLoadFile={onLoadAudioFile}
+              onNoteOn={onNoteOn}
             />
           ))}
         </div>

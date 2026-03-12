@@ -5,27 +5,29 @@ import type {
   Modulator,
   Route,
   RoutableParam,
+  LfoShape,
 } from "@/types/sound";
 
 /**
  * Tone.js node graph per source:
  *
  * Oscillator mode:
- *   Synth ──┬──▶ Reverb ──┐
- *           └──▶ Delay  ──┤
- *                          ▼
- *                       Panner ──▶ Volume ──▶ master
+ *   Synth ──▶ Filter? ──┬──▶ Reverb ──┐
+ *                        └──▶ Delay  ──┤
+ *                                       ▼
+ *                                    Panner ──▶ Volume ──▶ master
  *
  * Sampler mode:
- *   Player ──▶ PitchShift ──┬──▶ Reverb ──┐
- *                            └──▶ Delay  ──┤
- *                                           ▼
- *                                        Panner ──▶ Volume ──▶ master
+ *   Player ──▶ PitchShift ──▶ Filter? ──┬──▶ Reverb ──┐
+ *                                        └──▶ Delay  ──┤
+ *                                                       ▼
+ *                                                    Panner ──▶ Volume ──▶ master
  */
 
 interface OscillatorNodes {
   type: "oscillator";
   synth: Tone.Synth;
+  filter: Tone.Filter | null;
   reverb: Tone.Reverb;
   delay: Tone.FeedbackDelay;
   panner: Tone.Panner;
@@ -37,6 +39,7 @@ interface SamplerNodes {
   type: "sampler";
   player: Tone.Player;
   pitchShift: Tone.PitchShift;
+  filter: Tone.Filter | null;
   reverb: Tone.Reverb;
   delay: Tone.FeedbackDelay;
   panner: Tone.Panner;
@@ -55,6 +58,7 @@ interface BaselineValues {
   delayMix: number;
   playbackRate: number;
   pitchShift: number;
+  filterFrequency: number;
 }
 
 interface ActiveRoute {
@@ -62,28 +66,49 @@ interface ActiveRoute {
 }
 
 interface EnvelopeState {
-  /** Current envelope output value 0..1 */
   value: number;
-  /** Phase: idle, attack, decay, sustain, release */
   phase: "idle" | "attack" | "decay" | "sustain" | "release";
-  /** Timestamp when current phase started */
   phaseStart: number;
-  /** ADSR params snapshot */
   attack: number;
   decay: number;
   sustain: number;
   release: number;
-  /** Animation frame id */
   rafId: number | null;
 }
 
 export type MidiNoteCallback = (channel: number, note: number, velocity: number, isNoteOn: boolean) => void;
+
+/** Convert a MIDI note number to frequency in Hz */
+export function midiNoteToFrequency(note: number): number {
+  return 440 * Math.pow(2, (note - 69) / 12);
+}
+
+/** Note names for display */
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+export function midiNoteToName(note: number): string {
+  const octave = Math.floor(note / 12) - 1;
+  return `${NOTE_NAMES[note % 12]}${octave}`;
+}
+
+/** Keyboard key to MIDI note mapping (computer keyboard as piano) */
+const KEYBOARD_NOTE_MAP: Record<string, number> = {
+  // Lower row: C3-B3
+  "z": 48, "s": 49, "x": 50, "d": 51, "c": 52, "v": 53, "g": 54,
+  "b": 55, "h": 56, "n": 57, "j": 58, "m": 59,
+  // Upper row: C4-E5
+  "q": 60, "2": 61, "w": 62, "3": 63, "e": 64, "r": 65, "5": 66,
+  "t": 67, "6": 68, "y": 69, "7": 70, "u": 71, "i": 72, "9": 73,
+  "o": 74, "0": 75, "p": 76,
+};
+
+export { KEYBOARD_NOTE_MAP };
 
 export class AudioEngine {
   private master: Tone.Volume;
   private sources: Map<string, SourceNodes> = new Map();
   private baselines: Map<string, BaselineValues> = new Map();
   private lfos: Map<string, Tone.LFO> = new Map();
+  private randomIntervals: Map<string, ReturnType<typeof setInterval>> = new Map();
   private activeRoutes: Map<string, ActiveRoute> = new Map();
   private envelopes: Map<string, EnvelopeState> = new Map();
   private midiAccess: MIDIAccess | null = null;
@@ -116,6 +141,10 @@ export class AudioEngine {
       try { lfo.dispose(); } catch { /* ok */ }
     }
     this.lfos.clear();
+    for (const id of this.randomIntervals.keys()) {
+      clearInterval(this.randomIntervals.get(id)!);
+    }
+    this.randomIntervals.clear();
     for (const env of this.envelopes.values()) {
       if (env.rafId) cancelAnimationFrame(env.rafId);
     }
@@ -136,6 +165,18 @@ export class AudioEngine {
     this.master.volume.value = db;
   }
 
+  /* ── mute / solo ── */
+
+  updateMuteSolo(sources: SoundSource[]): void {
+    const anySolo = sources.some((s) => s.solo);
+    for (const source of sources) {
+      const nodes = this.sources.get(source.id);
+      if (!nodes) continue;
+      const shouldMute = source.muted || (anySolo && !source.solo);
+      nodes.volume.mute = shouldMute;
+    }
+  }
+
   /* ── MIDI ── */
 
   async initMidi(): Promise<boolean> {
@@ -148,7 +189,7 @@ export class AudioEngine {
         const data = msg.data;
         if (!data || data.length < 3) return;
         const status = data[0] & 0xf0;
-        const channel = (data[0] & 0x0f) + 1; // 1-16
+        const channel = (data[0] & 0x0f) + 1;
         const note = data[1];
         const velocity = data[2];
 
@@ -162,7 +203,6 @@ export class AudioEngine {
       for (const input of this.midiAccess.inputs.values()) {
         input.addEventListener("midimessage", this.midiInputHandler);
       }
-      // Handle hotplug
       this.midiAccess.addEventListener("statechange", () => {
         if (!this.midiAccess || !this.midiInputHandler) return;
         for (const input of this.midiAccess.inputs.values()) {
@@ -209,7 +249,6 @@ export class AudioEngine {
     env.phaseStart = performance.now() / 1000;
   }
 
-  /** Compute envelope value at current time. Returns 0..1 */
   getEnvelopeValue(modId: string): number {
     const env = this.envelopes.get(modId);
     if (!env || env.phase === "idle") return 0;
@@ -289,6 +328,22 @@ export class AudioEngine {
     const panner = new Tone.Panner(source.pan);
     const volume = new Tone.Volume(source.volume);
 
+    // Optional filter
+    let filter: Tone.Filter | null = null;
+    if (source.filterEnabled) {
+      filter = new Tone.Filter({
+        frequency: source.filterFrequency,
+        type: source.filterType,
+        Q: source.filterQ,
+      });
+    }
+
+    // Chain: filter? -> reverb + delay -> panner -> volume -> master
+    const effectInput = filter ?? null;
+    if (filter) {
+      filter.connect(reverb);
+      filter.connect(delay);
+    }
     reverb.connect(panner);
     delay.connect(panner);
     panner.connect(volume);
@@ -304,13 +359,18 @@ export class AudioEngine {
       });
 
       player.connect(pitchShiftNode);
-      pitchShiftNode.connect(reverb);
-      pitchShiftNode.connect(delay);
+      if (filter) {
+        pitchShiftNode.connect(filter);
+      } else {
+        pitchShiftNode.connect(reverb);
+        pitchShiftNode.connect(delay);
+      }
 
       this.sources.set(source.id, {
         type: "sampler",
         player,
         pitchShift: pitchShiftNode,
+        filter,
         reverb,
         delay,
         panner,
@@ -319,17 +379,27 @@ export class AudioEngine {
         loaded: false,
       });
     } else {
+      // Build oscillator type, handling custom partials
+      const oscType = source.waveform === "custom" ? "sine" : source.waveform;
       const synth = new Tone.Synth({
-        oscillator: { type: source.waveform },
+        oscillator: { type: oscType },
         envelope: { attack: 0.1, decay: 0.2, sustain: 0.5, release: 1 },
       });
+      if (source.waveform === "custom" && source.customPartials.length > 0) {
+        (synth.oscillator as Tone.OmniOscillator<Tone.Oscillator>).partials = source.customPartials;
+      }
       synth.frequency.value = source.frequency;
-      synth.connect(reverb);
-      synth.connect(delay);
+      if (filter) {
+        synth.connect(filter);
+      } else {
+        synth.connect(reverb);
+        synth.connect(delay);
+      }
 
       this.sources.set(source.id, {
         type: "oscillator",
         synth,
+        filter,
         reverb,
         delay,
         panner,
@@ -346,6 +416,7 @@ export class AudioEngine {
       delayMix: source.delayMix,
       playbackRate: source.playbackRate,
       pitchShift: source.pitchShift,
+      filterFrequency: source.filterFrequency,
     });
   }
 
@@ -391,10 +462,31 @@ export class AudioEngine {
       nodes.delay.delayTime.value = updates.delayTime;
     }
 
+    // Filter params
+    if (updates.filterFrequency !== undefined && nodes.filter) {
+      nodes.filter.frequency.value = updates.filterFrequency;
+      if (baseline) baseline.filterFrequency = updates.filterFrequency;
+    }
+    if (updates.filterQ !== undefined && nodes.filter) {
+      nodes.filter.Q.value = updates.filterQ;
+    }
+    if (updates.filterType !== undefined && nodes.filter) {
+      nodes.filter.type = updates.filterType;
+    }
+
     // Oscillator-specific
     if (nodes.type === "oscillator") {
       if (updates.waveform !== undefined) {
-        nodes.synth.oscillator.type = updates.waveform as Waveform;
+        if (updates.waveform === "custom") {
+          // Setting partials will be handled by customPartials update
+        } else {
+          nodes.synth.oscillator.type = updates.waveform as Waveform;
+        }
+      }
+      if (updates.customPartials !== undefined && updates.customPartials.length > 0) {
+        try {
+          (nodes.synth.oscillator as Tone.OmniOscillator<Tone.Oscillator>).partials = updates.customPartials;
+        } catch { /* ok - may not be supported in current state */ }
       }
       if (updates.frequency !== undefined) {
         nodes.synth.frequency.value = updates.frequency;
@@ -415,7 +507,7 @@ export class AudioEngine {
       if (updates.loopMode !== undefined) {
         nodes.player.loop = updates.loopMode !== "none";
         if (updates.loopMode === "pingpong") {
-          nodes.player.reverse = false; // pingpong handled via custom logic
+          nodes.player.reverse = false;
         }
       }
       if (updates.sampleStart !== undefined && nodes.loaded) {
@@ -427,7 +519,6 @@ export class AudioEngine {
     }
   }
 
-  /** Load an audio file into a sampler source from a blob URL or data URL */
   async loadSampleBuffer(id: string, url: string): Promise<number> {
     const nodes = this.sources.get(id);
     if (!nodes || nodes.type !== "sampler") return 0;
@@ -443,9 +534,16 @@ export class AudioEngine {
   addModulator(mod: Modulator): void {
     if (mod.type === "lfo") {
       if (this.lfos.has(mod.id)) return;
-      const lfo = new Tone.LFO(mod.rate, 0, 1);
-      lfo.type = mod.shape;
-      this.lfos.set(mod.id, lfo);
+      if (mod.shape === "random") {
+        // Random/S&H: use a regular LFO internally but we'll override via interval
+        const lfo = new Tone.LFO(mod.rate, 0, 1);
+        lfo.type = "square";
+        this.lfos.set(mod.id, lfo);
+      } else {
+        const lfo = new Tone.LFO(mod.rate, 0, 1);
+        lfo.type = mod.shape as OscillatorType;
+        this.lfos.set(mod.id, lfo);
+      }
     } else if (mod.type === "envelope") {
       this.envelopes.set(mod.id, {
         value: 0,
@@ -466,6 +564,11 @@ export class AudioEngine {
       try { lfo.stop(); lfo.dispose(); } catch { /* ok */ }
       this.lfos.delete(id);
     }
+    const ri = this.randomIntervals.get(id);
+    if (ri) {
+      clearInterval(ri);
+      this.randomIntervals.delete(id);
+    }
     const env = this.envelopes.get(id);
     if (env) {
       if (env.rafId) cancelAnimationFrame(env.rafId);
@@ -478,12 +581,16 @@ export class AudioEngine {
     const lfo = this.lfos.get(id);
     if (lfo) {
       if (updates.rate !== undefined) lfo.frequency.value = updates.rate;
-      if (updates.shape !== undefined) lfo.type = updates.shape;
+      if (updates.shape !== undefined && updates.shape !== "random") {
+        lfo.type = updates.shape as OscillatorType;
+      }
     }
     // Switching away from LFO
     if (updates.type && updates.type !== "lfo" && lfo) {
       try { lfo.stop(); lfo.dispose(); } catch { /* ok */ }
       this.lfos.delete(id);
+      const ri = this.randomIntervals.get(id);
+      if (ri) { clearInterval(ri); this.randomIntervals.delete(id); }
     }
     // Switching away from envelope
     if (updates.type && updates.type !== "envelope") {
@@ -496,8 +603,9 @@ export class AudioEngine {
     }
     // Switching to LFO
     if (updates.type === "lfo" && !this.lfos.has(id)) {
+      const shape = (updates.shape as LfoShape) ?? "sine";
       const newLfo = new Tone.LFO(updates.rate ?? 1, 0, 1);
-      newLfo.type = (updates.shape as Waveform) ?? "sine";
+      newLfo.type = (shape === "random" ? "square" : shape) as OscillatorType;
       this.lfos.set(id, newLfo);
     }
     // Switching to envelope
@@ -541,6 +649,7 @@ export class AudioEngine {
         delayMix: source.delayMix,
         playbackRate: source.playbackRate,
         pitchShift: source.pitchShift,
+        filterFrequency: source.filterFrequency,
       });
     }
 
@@ -558,12 +667,17 @@ export class AudioEngine {
       const nodes = this.sources.get(route.sourceId);
       if (!nodes) continue;
 
-      // Skip oscillator-only params on sampler sources and vice versa
+      // Skip invalid param/source combinations
       if (nodes.type === "sampler" && route.parameter === "frequency") continue;
       if (nodes.type === "oscillator" && (route.parameter === "playbackRate" || route.parameter === "pitchShift")) continue;
+      if (route.parameter === "filterFrequency" && !nodes.filter) continue;
 
       if (mod.type === "lfo") {
-        this.applyLfoRoute(route, mod, nodes);
+        if (mod.shape === "random") {
+          this.applyRandomRoute(route, mod, nodes);
+        } else {
+          this.applyLfoRoute(route, mod, nodes);
+        }
       } else if (mod.type === "data" && mod.data) {
         this.applyDataRoute(route, mod, nodes);
       } else if (mod.type === "envelope") {
@@ -607,6 +721,8 @@ export class AudioEngine {
         nodes.playing = true;
       }
     }
+
+    this.updateMuteSolo(sources);
   }
 
   async startSource(source: SoundSource): Promise<void> {
@@ -637,6 +753,13 @@ export class AudioEngine {
         nodes.playing = false;
       }
     }
+  }
+
+  /** Set oscillator frequency directly (e.g. from keyboard/MIDI note) */
+  setSourceFrequency(id: string, freq: number): void {
+    const nodes = this.sources.get(id);
+    if (!nodes || nodes.type !== "oscillator") return;
+    nodes.synth.frequency.value = freq;
   }
 
   /* ── internal: restore baseline ── */
@@ -672,6 +795,11 @@ export class AudioEngine {
       case "pitchShift":
         if (nodes.type === "sampler") {
           nodes.pitchShift.pitch = baseline.pitchShift;
+        }
+        break;
+      case "filterFrequency":
+        if (nodes.filter) {
+          nodes.filter.frequency.value = baseline.filterFrequency;
         }
         break;
     }
@@ -721,6 +849,30 @@ export class AudioEngine {
     lfo.max = mid + halfRange;
   }
 
+  /* ── internal: random (S&H) route ── */
+
+  private applyRandomRoute(
+    route: Route,
+    mod: Modulator,
+    nodes: SourceNodes,
+  ): void {
+    const sourceId = route.sourceId;
+    const param = route.parameter;
+    const intervalMs = Math.max(20, 1000 / mod.rate);
+
+    const intervalId = setInterval(() => {
+      const randomVal = Math.random() * route.depth;
+      this.writeModulatedValue(route, randomVal, nodes);
+    }, intervalMs);
+
+    this.activeRoutes.set(route.id, {
+      disconnect: () => {
+        clearInterval(intervalId);
+        this.restoreBaseline(sourceId, param);
+      },
+    });
+  }
+
   /* ── internal: data route ── */
 
   private applyDataRoute(
@@ -765,8 +917,7 @@ export class AudioEngine {
     const param = route.parameter;
     const modId = mod.id;
 
-    // Set up MIDI listener for this envelope
-    const midiChannel = mod.midiChannel; // 0 = all, 1-16 = specific
+    const midiChannel = mod.midiChannel;
     this.onMidiNote(modId, (channel, _note, _velocity, isNoteOn) => {
       if (midiChannel !== 0 && channel !== midiChannel) return;
       if (isNoteOn) {
@@ -776,7 +927,6 @@ export class AudioEngine {
       }
     });
 
-    // Poll envelope value at ~60fps and write to target parameter
     let running = true;
     const tick = () => {
       if (!running) return;
@@ -811,10 +961,11 @@ export class AudioEngine {
       case "delayMix":
         return nodes.delay.wet;
       case "playbackRate":
-        // playbackRate is not a Tone.Signal, handle via data route only
         return null;
       case "pitchShift":
         return nodes.type === "sampler" ? nodes.pitchShift.pitch : null;
+      case "filterFrequency":
+        return nodes.filter ? nodes.filter.frequency : null;
       default:
         return null;
     }
@@ -856,6 +1007,11 @@ export class AudioEngine {
           nodes.pitchShift.pitch = Math.max(-24, Math.min(24, value));
         }
         break;
+      case "filterFrequency":
+        if (nodes.filter) {
+          nodes.filter.frequency.value = Math.max(20, Math.min(20000, value));
+        }
+        break;
     }
   }
 
@@ -865,6 +1021,9 @@ export class AudioEngine {
     } else {
       try { nodes.player.dispose(); } catch { /* already disposed */ }
       try { nodes.pitchShift.dispose(); } catch { /* already disposed */ }
+    }
+    if (nodes.filter) {
+      try { nodes.filter.dispose(); } catch { /* already disposed */ }
     }
     try { nodes.reverb.dispose(); } catch { /* already disposed */ }
     try { nodes.delay.dispose(); } catch { /* already disposed */ }

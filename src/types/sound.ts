@@ -1,16 +1,23 @@
-export type Waveform = "sine" | "square" | "sawtooth" | "triangle";
+export type Waveform = "sine" | "square" | "sawtooth" | "triangle" | "custom";
+
+export type LfoShape = Waveform | "random";
 
 export type SourceType = "oscillator" | "sampler";
 
 export type LoopMode = "none" | "loop" | "pingpong";
 
+export type FilterType = "lowpass" | "highpass" | "bandpass" | "notch";
+
 export interface SoundSource {
   id: string;
   name: string;
   sourceType: SourceType;
+  muted: boolean;
+  solo: boolean;
   // Oscillator fields
   waveform: Waveform;
   frequency: number;
+  customPartials: number[];
   // Sampler fields
   audioFileUrl: string | null;
   audioFileName: string | null;
@@ -19,6 +26,11 @@ export interface SoundSource {
   loopMode: LoopMode;
   pitchShift: number;
   playbackRate: number;
+  // Filter
+  filterEnabled: boolean;
+  filterType: FilterType;
+  filterFrequency: number;
+  filterQ: number;
   // Shared fields
   volume: number;
   pan: number;
@@ -32,8 +44,11 @@ export function createSoundSource(index: number): SoundSource {
     id: Date.now().toString(),
     name: `Source ${index + 1}`,
     sourceType: "oscillator",
+    muted: false,
+    solo: false,
     waveform: "sine",
     frequency: 440,
+    customPartials: [1, 0.5, 0.25],
     audioFileUrl: null,
     audioFileName: null,
     sampleStart: 0,
@@ -41,6 +56,10 @@ export function createSoundSource(index: number): SoundSource {
     loopMode: "none",
     pitchShift: 0,
     playbackRate: 1,
+    filterEnabled: false,
+    filterType: "lowpass",
+    filterFrequency: 1000,
+    filterQ: 1,
     volume: -12,
     pan: 0,
     reverbMix: 0,
@@ -57,7 +76,7 @@ export interface Modulator {
   id: string;
   name: string;
   type: ModulatorType;
-  shape: Waveform;
+  shape: LfoShape;
   rate: number;
   depth: number;
   data: number[] | null;
@@ -103,7 +122,8 @@ export type RoutableParam =
   | "reverbMix"
   | "delayMix"
   | "playbackRate"
-  | "pitchShift";
+  | "pitchShift"
+  | "filterFrequency";
 
 export interface Route {
   id: string;
@@ -151,5 +171,7 @@ export function getDefaultRange(param: RoutableParam): { min: number; max: numbe
       return { min: 0.5, max: 2 };
     case "pitchShift":
       return { min: -12, max: 12 };
+    case "filterFrequency":
+      return { min: 20, max: 20000 };
   }
 }
