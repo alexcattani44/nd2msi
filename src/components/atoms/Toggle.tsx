@@ -17,15 +17,15 @@ const colorClasses: Record<string, { on: string; off: string }> = {
   },
   success: {
     on: "bg-success/20 text-success border-success",
-    off: "bg-bg-tertiary text-text-secondary border-border-color hover:border-success",
+    off: "bg-bg-tertiary text-text-secondary border hover:border-success",
   },
   danger: {
-    on: "bg-danger/20 text-danger border-danger",
-    off: "bg-bg-tertiary text-text-secondary border-border-color hover:border-danger",
+    on: "bg-red-500/20 text-danger border-danger",
+    off: "bg-bg-tertiary text-text-secondary border hover:border-danger",
   },
   warning: {
     on: "bg-yellow-500/20 text-yellow-400 border-yellow-500",
-    off: "bg-bg-tertiary text-text-secondary border-border-color hover:border-yellow-500",
+    off: "bg-bg-tertiary text-text-secondary border hover:border-yellow-500",
   },
 };
 
@@ -36,7 +36,8 @@ export function Toggle({
   activeColor = "accent",
   onChange,
 }: ToggleProps) {
-  const sizeClass = size === "sm" ? "px-2 py-0.5 text-xs" : "px-3 py-1.5 text-sm";
+  const sizeClass =
+    size === "sm" ? "px-2 py-0.5 text-xs" : "px-3 py-1.5 text-sm";
   const colors = colorClasses[activeColor];
 
   return (
