@@ -27,7 +27,7 @@ import type {
 interface OscillatorNodes {
   type: "oscillator";
   synth: Tone.Synth;
-  filter: Tone.Filter | null;
+  filter: Tone.Filter;
   reverb: Tone.Reverb;
   delay: Tone.FeedbackDelay;
   panner: Tone.Panner;
@@ -39,7 +39,7 @@ interface SamplerNodes {
   type: "sampler";
   player: Tone.Player;
   pitchShift: Tone.PitchShift;
-  filter: Tone.Filter | null;
+  filter: Tone.Filter;
   reverb: Tone.Reverb;
   delay: Tone.FeedbackDelay;
   panner: Tone.Panner;
@@ -328,22 +328,16 @@ export class AudioEngine {
     const panner = new Tone.Panner(source.pan);
     const volume = new Tone.Volume(source.volume);
 
-    // Optional filter
-    let filter: Tone.Filter | null = null;
-    if (source.filterEnabled) {
-      filter = new Tone.Filter({
-        frequency: source.filterFrequency,
-        type: source.filterType,
-        Q: source.filterQ,
-      });
-    }
+    // Filter is always in the chain; when disabled, pass-through (20kHz lowpass)
+    const filter = new Tone.Filter({
+      frequency: source.filterEnabled ? source.filterFrequency : 20000,
+      type: source.filterEnabled ? source.filterType : "lowpass",
+      Q: source.filterEnabled ? source.filterQ : 0.1,
+    });
 
-    // Chain: filter? -> reverb + delay -> panner -> volume -> master
-    const effectInput = filter ?? null;
-    if (filter) {
-      filter.connect(reverb);
-      filter.connect(delay);
-    }
+    // Chain: source -> filter -> reverb + delay -> panner -> volume -> master
+    filter.connect(reverb);
+    filter.connect(delay);
     reverb.connect(panner);
     delay.connect(panner);
     panner.connect(volume);
@@ -359,12 +353,7 @@ export class AudioEngine {
       });
 
       player.connect(pitchShiftNode);
-      if (filter) {
-        pitchShiftNode.connect(filter);
-      } else {
-        pitchShiftNode.connect(reverb);
-        pitchShiftNode.connect(delay);
-      }
+      pitchShiftNode.connect(filter);
 
       this.sources.set(source.id, {
         type: "sampler",
@@ -389,12 +378,7 @@ export class AudioEngine {
         (synth.oscillator as Tone.OmniOscillator<Tone.Oscillator>).partials = source.customPartials;
       }
       synth.frequency.value = source.frequency;
-      if (filter) {
-        synth.connect(filter);
-      } else {
-        synth.connect(reverb);
-        synth.connect(delay);
-      }
+      synth.connect(filter);
 
       this.sources.set(source.id, {
         type: "oscillator",
@@ -462,15 +446,28 @@ export class AudioEngine {
       nodes.delay.delayTime.value = updates.delayTime;
     }
 
-    // Filter params
-    if (updates.filterFrequency !== undefined && nodes.filter) {
+    // Filter params — filter node is always present
+    if (updates.filterEnabled !== undefined) {
+      if (updates.filterEnabled) {
+        // Re-apply the real filter settings
+        nodes.filter.frequency.value = updates.filterFrequency ?? 1000;
+        nodes.filter.type = updates.filterType ?? "lowpass";
+        nodes.filter.Q.value = updates.filterQ ?? 1;
+      } else {
+        // Bypass: set to pass-through
+        nodes.filter.frequency.value = 20000;
+        nodes.filter.type = "lowpass";
+        nodes.filter.Q.value = 0.1;
+      }
+    }
+    if (updates.filterFrequency !== undefined) {
       nodes.filter.frequency.value = updates.filterFrequency;
       if (baseline) baseline.filterFrequency = updates.filterFrequency;
     }
-    if (updates.filterQ !== undefined && nodes.filter) {
+    if (updates.filterQ !== undefined) {
       nodes.filter.Q.value = updates.filterQ;
     }
-    if (updates.filterType !== undefined && nodes.filter) {
+    if (updates.filterType !== undefined) {
       nodes.filter.type = updates.filterType;
     }
 
@@ -670,7 +667,7 @@ export class AudioEngine {
       // Skip invalid param/source combinations
       if (nodes.type === "sampler" && route.parameter === "frequency") continue;
       if (nodes.type === "oscillator" && (route.parameter === "playbackRate" || route.parameter === "pitchShift")) continue;
-      if (route.parameter === "filterFrequency" && !nodes.filter) continue;
+      // filterFrequency is always available since filter is always in the chain
 
       if (mod.type === "lfo") {
         if (mod.shape === "random") {
@@ -798,9 +795,7 @@ export class AudioEngine {
         }
         break;
       case "filterFrequency":
-        if (nodes.filter) {
-          nodes.filter.frequency.value = baseline.filterFrequency;
-        }
+        nodes.filter.frequency.value = baseline.filterFrequency;
         break;
     }
   }
@@ -965,7 +960,7 @@ export class AudioEngine {
       case "pitchShift":
         return nodes.type === "sampler" ? nodes.pitchShift.pitch : null;
       case "filterFrequency":
-        return nodes.filter ? nodes.filter.frequency : null;
+        return nodes.filter.frequency;
       default:
         return null;
     }
@@ -1008,9 +1003,7 @@ export class AudioEngine {
         }
         break;
       case "filterFrequency":
-        if (nodes.filter) {
-          nodes.filter.frequency.value = Math.max(20, Math.min(20000, value));
-        }
+        nodes.filter.frequency.value = Math.max(20, Math.min(20000, value));
         break;
     }
   }
@@ -1022,9 +1015,7 @@ export class AudioEngine {
       try { nodes.player.dispose(); } catch { /* already disposed */ }
       try { nodes.pitchShift.dispose(); } catch { /* already disposed */ }
     }
-    if (nodes.filter) {
-      try { nodes.filter.dispose(); } catch { /* already disposed */ }
-    }
+    try { nodes.filter.dispose(); } catch { /* already disposed */ }
     try { nodes.reverb.dispose(); } catch { /* already disposed */ }
     try { nodes.delay.dispose(); } catch { /* already disposed */ }
     try { nodes.panner.dispose(); } catch { /* already disposed */ }

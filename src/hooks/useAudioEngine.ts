@@ -95,30 +95,25 @@ export function useAudioEngine() {
 
   const updateSource = useCallback(
     (id: string, updates: Partial<SoundSource>) => {
-      // If filter enabled/disabled or type changed, need to rebuild source
-      const needsRebuild = updates.filterEnabled !== undefined || updates.filterType !== undefined;
-
-      setSoundSources((prev) => {
-        const updated = prev.map((s) => (s.id === id ? { ...s, ...updates } : s));
-
-        if (needsRebuild) {
-          const source = updated.find((s) => s.id === id);
-          if (source) {
-            const engine = getEngine();
-            const wasPlaying = isPlayingRef.current;
-            engine.removeSource(id);
-            engine.addSource(source);
-            if (wasPlaying && source.sourceType === "oscillator") {
-              engine.startSource(source);
-            }
-            engine.updateMuteSolo(updated);
-          }
-        } else {
-          getEngine().updateSource(id, updates);
-        }
-
-        return updated;
-      });
+      // When enabling filter, pass the full filter state so the engine can apply it
+      if (updates.filterEnabled === true) {
+        setSoundSources((prev) => {
+          const source = prev.find((s) => s.id === id);
+          const merged = {
+            ...updates,
+            filterFrequency: updates.filterFrequency ?? source?.filterFrequency ?? 1000,
+            filterType: updates.filterType ?? source?.filterType ?? "lowpass" as const,
+            filterQ: updates.filterQ ?? source?.filterQ ?? 1,
+          };
+          getEngine().updateSource(id, merged);
+          return prev.map((s) => (s.id === id ? { ...s, ...updates } : s));
+        });
+      } else {
+        setSoundSources((prev) =>
+          prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
+        );
+        getEngine().updateSource(id, updates);
+      }
     },
     [getEngine],
   );
