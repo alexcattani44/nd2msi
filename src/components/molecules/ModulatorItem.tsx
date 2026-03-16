@@ -6,6 +6,8 @@ import { Select } from "@/components/atoms/Select";
 import { Button } from "@/components/atoms/Button";
 import { Toggle } from "@/components/atoms/Toggle";
 import type { Modulator, LfoShape } from "@/types/sound";
+import { LfoPreview } from "@/components/molecules/LfoPreview";
+import { EnvelopePreview } from "@/components/molecules/EnvelopePreview";
 import Papa from "papaparse";
 
 const SHAPE_OPTIONS = [
@@ -164,6 +166,7 @@ export function ModulatorItem({
             formatValue={(v) => `${v.toFixed(2)} Hz`}
             onChange={(v) => onUpdate(modulator.id, { rate: v })}
           />
+          <LfoPreview shape={modulator.shape} rate={modulator.rate} />
         </>
       )}
 
@@ -292,6 +295,12 @@ export function ModulatorItem({
             step={0.001}
             formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
             onChange={(v) => onUpdate(modulator.id, { release: v })}
+          />
+          <EnvelopePreview
+            attack={modulator.attack}
+            decay={modulator.decay}
+            sustain={modulator.sustain}
+            release={modulator.release}
           />
           <Select
             label="MIDI Channel"
