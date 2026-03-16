@@ -84,6 +84,9 @@ export interface Modulator {
   dataMin: number;
   dataMax: number;
   dataLength: number;
+  // Data-driven fields
+  dataRate: number; // ms between data points (default 50)
+  dataSmoothing: number; // 0 = none, 1 = full smoothing (linear interpolation)
   // ADSR envelope fields
   attack: number;
   decay: number;
@@ -105,6 +108,8 @@ export function createModulator(index: number): Modulator {
     dataMin: 0,
     dataMax: 1,
     dataLength: 0,
+    dataRate: 50,
+    dataSmoothing: 0,
     attack: 0.1,
     decay: 0.2,
     sustain: 0.7,

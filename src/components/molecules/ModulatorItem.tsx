@@ -204,6 +204,25 @@ export function ModulatorItem({
             />
           </div>
 
+          <Slider
+            label="Rate"
+            value={modulator.dataRate}
+            min={5}
+            max={2000}
+            step={1}
+            formatValue={(v) => `${v < 1000 ? v.toFixed(0) + " ms" : (v / 1000).toFixed(2) + " s"}`}
+            onChange={(v) => onUpdate(modulator.id, { dataRate: v })}
+          />
+          <Slider
+            label="Smoothing"
+            value={modulator.dataSmoothing}
+            min={0}
+            max={1}
+            step={0.01}
+            formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+            onChange={(v) => onUpdate(modulator.id, { dataSmoothing: v })}
+          />
+
           {modulator.data && (
             <div className="mt-1 p-3 bg-bg-primary rounded">
               <div className="grid grid-cols-2 gap-2 mb-2">
