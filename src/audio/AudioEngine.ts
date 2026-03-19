@@ -883,22 +883,57 @@ export class AudioEngine {
     const dataRange = mod.dataMax - dataMin || 1;
     const sourceId = route.sourceId;
     const param = route.parameter;
+    const intervalMs = mod.dataRate || 50;
+    const smoothing = mod.dataSmoothing || 0;
 
-    const intervalId = setInterval(() => {
-      const raw = data[dataIndex];
-      const normalized = (raw - dataMin) / dataRange;
+    if (smoothing > 0) {
+      // Smoothing: use a faster tick and interpolate between current and next point
+      const subSteps = Math.max(2, Math.round(smoothing * 20)); // 2-20 sub-steps
+      const subInterval = intervalMs / subSteps;
+      let subStep = 0;
 
-      this.writeModulatedValue(route, normalized * route.depth, nodes);
+      const intervalId = setInterval(() => {
+        const currRaw = data[dataIndex];
+        const nextRaw = data[(dataIndex + 1) % data.length];
+        const currNorm = (currRaw - dataMin) / dataRange;
+        const nextNorm = (nextRaw - dataMin) / dataRange;
 
-      dataIndex = (dataIndex + 1) % data.length;
-    }, 50);
+        const t = subStep / subSteps;
+        const interpolated = currNorm + (nextNorm - currNorm) * t;
 
-    this.activeRoutes.set(route.id, {
-      disconnect: () => {
-        clearInterval(intervalId);
-        this.restoreBaseline(sourceId, param);
-      },
-    });
+        this.writeModulatedValue(route, interpolated * route.depth, nodes);
+
+        subStep++;
+        if (subStep >= subSteps) {
+          subStep = 0;
+          dataIndex = (dataIndex + 1) % data.length;
+        }
+      }, subInterval);
+
+      this.activeRoutes.set(route.id, {
+        disconnect: () => {
+          clearInterval(intervalId);
+          this.restoreBaseline(sourceId, param);
+        },
+      });
+    } else {
+      // No smoothing: step directly between points
+      const intervalId = setInterval(() => {
+        const raw = data[dataIndex];
+        const normalized = (raw - dataMin) / dataRange;
+
+        this.writeModulatedValue(route, normalized * route.depth, nodes);
+
+        dataIndex = (dataIndex + 1) % data.length;
+      }, intervalMs);
+
+      this.activeRoutes.set(route.id, {
+        disconnect: () => {
+          clearInterval(intervalId);
+          this.restoreBaseline(sourceId, param);
+        },
+      });
+    }
   }
 
   /* ── internal: envelope route ── */

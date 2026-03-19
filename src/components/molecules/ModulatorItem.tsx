@@ -6,6 +6,8 @@ import { Select } from "@/components/atoms/Select";
 import { Button } from "@/components/atoms/Button";
 import { Toggle } from "@/components/atoms/Toggle";
 import type { Modulator, LfoShape } from "@/types/sound";
+import { LfoPreview } from "@/components/molecules/LfoPreview";
+import { EnvelopePreview } from "@/components/molecules/EnvelopePreview";
 import Papa from "papaparse";
 
 const SHAPE_OPTIONS = [
@@ -164,6 +166,7 @@ export function ModulatorItem({
             formatValue={(v) => `${v.toFixed(2)} Hz`}
             onChange={(v) => onUpdate(modulator.id, { rate: v })}
           />
+          <LfoPreview shape={modulator.shape} rate={modulator.rate} />
         </>
       )}
 
@@ -203,6 +206,25 @@ export function ModulatorItem({
               onChange={handleFileSelect}
             />
           </div>
+
+          <Slider
+            label="Rate"
+            value={modulator.dataRate}
+            min={5}
+            max={2000}
+            step={1}
+            formatValue={(v) => `${v < 1000 ? v.toFixed(0) + " ms" : (v / 1000).toFixed(2) + " s"}`}
+            onChange={(v) => onUpdate(modulator.id, { dataRate: v })}
+          />
+          <Slider
+            label="Smoothing"
+            value={modulator.dataSmoothing}
+            min={0}
+            max={1}
+            step={0.01}
+            formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+            onChange={(v) => onUpdate(modulator.id, { dataSmoothing: v })}
+          />
 
           {modulator.data && (
             <div className="mt-1 p-3 bg-bg-primary rounded">
@@ -273,6 +295,12 @@ export function ModulatorItem({
             step={0.001}
             formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
             onChange={(v) => onUpdate(modulator.id, { release: v })}
+          />
+          <EnvelopePreview
+            attack={modulator.attack}
+            decay={modulator.decay}
+            sustain={modulator.sustain}
+            release={modulator.release}
           />
           <Select
             label="MIDI Channel"
