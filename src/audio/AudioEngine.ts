@@ -802,46 +802,54 @@ export class AudioEngine {
 
   /* ── internal: LFO route ── */
 
+  /**
+   * Compute the LFO waveform value at a given phase (0–1) and write it
+   * to the target parameter via writeModulatedValue.  This avoids
+   * Tone.js `lfo.connect()` which silently fails for Tone.Param targets
+   * (pan, volume, filterFrequency) that do not extend ToneAudioNode.
+   */
   private applyLfoRoute(
     route: Route,
     mod: Modulator,
     nodes: SourceNodes,
   ): void {
-    const lfo = this.lfos.get(mod.id);
-    if (!lfo) return;
-
-    try { lfo.stop(); lfo.disconnect(); } catch { /* ok */ }
-
-    this.configureLfoRange(lfo, route);
-
-    const target = this.getTargetParam(route.parameter, nodes);
-    if (!target) return;
-
     const sourceId = route.sourceId;
     const param = route.parameter;
+    const startTime = performance.now() / 1000;
 
-    try {
-      lfo.connect(target);
-      lfo.start();
-      this.activeRoutes.set(route.id, {
-        disconnect: () => {
-          try { lfo.stop(); lfo.disconnect(); } catch { /* ok */ }
-          this.restoreBaseline(sourceId, param);
-        },
-      });
-    } catch (err) {
-      console.error("Error connecting LFO:", err);
-    }
+    let running = true;
+    const tick = () => {
+      if (!running) return;
+      const elapsed = performance.now() / 1000 - startTime;
+      const phase = (elapsed * mod.rate) % 1;
+      const waveValue = this.lfoWaveform(mod.shape, phase);
+      this.writeModulatedValue(route, waveValue * route.depth, nodes);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+
+    this.activeRoutes.set(route.id, {
+      disconnect: () => {
+        running = false;
+        this.restoreBaseline(sourceId, param);
+      },
+    });
   }
 
-  private configureLfoRange(lfo: Tone.LFO, route: Route): void {
-    const depth = route.depth;
-    const { min, max } = route;
-
-    const mid = (min + max) / 2;
-    const halfRange = ((max - min) / 2) * depth;
-    lfo.min = mid - halfRange;
-    lfo.max = mid + halfRange;
+  /** Return a 0-1 value for the given LFO shape at the given phase (0-1). */
+  private lfoWaveform(shape: LfoShape, phase: number): number {
+    switch (shape) {
+      case "sine":
+        return (Math.sin(2 * Math.PI * phase) + 1) / 2;
+      case "square":
+        return phase < 0.5 ? 1 : 0;
+      case "sawtooth":
+        return phase;
+      case "triangle":
+        return 1 - Math.abs(2 * phase - 1);
+      default:
+        return 0.5;
+    }
   }
 
   /* ── internal: random (S&H) route ── */
