@@ -5,6 +5,14 @@ import { AudioEngine } from "@/audio/AudioEngine";
 import type { SoundSource, Modulator, Route } from "@/types/sound";
 import { createSoundSource, createModulator, createRoute } from "@/types/sound";
 
+/** Serializable project state for save/load */
+export interface ProjectState {
+  soundSources: SoundSource[];
+  modulators: Modulator[];
+  routes: Route[];
+  masterVolume: number;
+}
+
 export function useAudioEngine() {
   const engineRef = useRef<AudioEngine | null>(null);
   const [soundSources, setSoundSources] = useState<SoundSource[]>([]);
@@ -35,9 +43,21 @@ export function useAudioEngine() {
   const modulatorsRef = useRef(modulators);
   modulatorsRef.current = modulators;
 
-  /* ── Re-apply modulation whenever routes/modulators/playing change.
-       clearAllRoutes in the cleanup restores baselines so the source
-       returns to its user-set values when routes are removed. ── */
+  /* ── Initialize MIDI when an envelope modulator exists ── */
+  const midiInitRef = useRef(false);
+  useEffect(() => {
+    const hasEnvelope = modulators.some((m) => m.type === "envelope");
+    if (hasEnvelope && !midiInitRef.current) {
+      midiInitRef.current = true;
+      getEngine().initMidi().then((ok) => {
+        if (!ok) {
+          console.warn("Web MIDI API not available. Envelope modulators will not respond to MIDI input.");
+        }
+      });
+    }
+  }, [modulators, getEngine]);
+
+  /* ── Re-apply modulation whenever routes/modulators/playing change. ── */
   useEffect(() => {
     if (!isPlaying || !engineRef.current) return;
     engineRef.current.applyRoutes(routes, modulators, soundSources);
@@ -45,6 +65,12 @@ export function useAudioEngine() {
       engineRef.current?.clearAllRoutes();
     };
   }, [routes, modulators, isPlaying, soundSources]);
+
+  /* ── Update mute/solo whenever sources change ── */
+  useEffect(() => {
+    if (!isPlaying || !engineRef.current) return;
+    engineRef.current.updateMuteSolo(soundSources);
+  }, [soundSources, isPlaying]);
 
   /* ── master volume ── */
   const changeMasterVolume = useCallback(
@@ -69,10 +95,74 @@ export function useAudioEngine() {
 
   const updateSource = useCallback(
     (id: string, updates: Partial<SoundSource>) => {
+      // When enabling filter, pass the full filter state so the engine can apply it
+      if (updates.filterEnabled === true) {
+        setSoundSources((prev) => {
+          const source = prev.find((s) => s.id === id);
+          const merged = {
+            ...updates,
+            filterFrequency: updates.filterFrequency ?? source?.filterFrequency ?? 1000,
+            filterType: updates.filterType ?? source?.filterType ?? "lowpass" as const,
+            filterQ: updates.filterQ ?? source?.filterQ ?? 1,
+          };
+          getEngine().updateSource(id, merged);
+          return prev.map((s) => (s.id === id ? { ...s, ...updates } : s));
+        });
+      } else {
+        setSoundSources((prev) =>
+          prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
+        );
+        getEngine().updateSource(id, updates);
+      }
+    },
+    [getEngine],
+  );
+
+  /** Load an audio file into a sampler source. Returns the duration. */
+  const loadAudioFile = useCallback(
+    async (id: string, file: File) => {
+      const engine = getEngine();
+      const url = URL.createObjectURL(file);
+
+      const source = sourcesRef.current.find((s) => s.id === id);
+      if (source && !engine["sources"].has(id)) {
+        engine.addSource(source);
+      }
+
+      const duration = await engine.loadSampleBuffer(id, url);
+      URL.revokeObjectURL(url);
+
       setSoundSources((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
+        prev.map((s) =>
+          s.id === id
+            ? { ...s, audioFileName: file.name, audioFileUrl: url, sampleEnd: 1 }
+            : s,
+        ),
       );
-      getEngine().updateSource(id, updates);
+
+      return duration;
+    },
+    [getEngine],
+  );
+
+  const changeSourceType = useCallback(
+    (id: string, sourceType: SoundSource["sourceType"]) => {
+      const engine = getEngine();
+      const wasPlaying = isPlayingRef.current;
+
+      engine.removeSource(id);
+
+      setSoundSources((prev) =>
+        prev.map((s) => {
+          if (s.id !== id) return s;
+          const updated = { ...s, sourceType };
+          engine.addSource(updated);
+          if (wasPlaying && updated.sourceType === "oscillator") {
+            engine.startSource(updated);
+          }
+          return updated;
+        }),
+      );
     },
     [getEngine],
   );
@@ -81,8 +171,15 @@ export function useAudioEngine() {
     (id: string) => {
       getEngine().removeSource(id);
       setSoundSources((prev) => prev.filter((s) => s.id !== id));
-      // Cascade: remove routes referencing this source
       setRoutes((prev) => prev.filter((r) => r.sourceId !== id));
+    },
+    [getEngine],
+  );
+
+  /* ── note on (keyboard playing) ── */
+  const noteOn = useCallback(
+    (sourceId: string, frequency: number) => {
+      getEngine().setSourceFrequency(sourceId, frequency);
     },
     [getEngine],
   );
@@ -110,7 +207,6 @@ export function useAudioEngine() {
     (id: string) => {
       getEngine().removeModulator(id);
       setModulators((prev) => prev.filter((m) => m.id !== id));
-      // Cascade: remove routes referencing this modulator
       setRoutes((prev) => prev.filter((r) => r.modulatorId !== id));
     },
     [getEngine],
@@ -158,6 +254,72 @@ export function useAudioEngine() {
     }
   }, [getEngine, isPlaying]);
 
+  /* ── save / load ── */
+  const saveProject = useCallback((): ProjectState => {
+    return {
+      soundSources: soundSources.map((s) => ({ ...s, audioFileUrl: null })),
+      modulators: [...modulators],
+      routes: [...routes],
+      masterVolume,
+    };
+  }, [soundSources, modulators, routes, masterVolume]);
+
+  const loadProject = useCallback(
+    (project: ProjectState) => {
+      const engine = getEngine();
+
+      // Stop and clean up
+      engine.clearAllRoutes();
+      engine.stopAll();
+      for (const s of sourcesRef.current) {
+        engine.removeSource(s.id);
+      }
+      for (const m of modulatorsRef.current) {
+        engine.removeModulator(m.id);
+      }
+
+      setIsPlaying(false);
+
+      // Restore state
+      setMasterVolume(project.masterVolume);
+      engine.setMasterVolume(project.masterVolume);
+
+      setSoundSources(project.soundSources);
+      setModulators(project.modulators);
+      setRoutes(project.routes);
+
+      // Re-add to engine
+      for (const source of project.soundSources) {
+        engine.addSource(source);
+      }
+      for (const mod of project.modulators) {
+        engine.addModulator(mod);
+      }
+    },
+    [getEngine],
+  );
+
+  const exportProjectFile = useCallback(() => {
+    const project = saveProject();
+    const json = JSON.stringify(project, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "nd2msi-project.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [saveProject]);
+
+  const importProjectFile = useCallback(
+    async (file: File) => {
+      const text = await file.text();
+      const project = JSON.parse(text) as ProjectState;
+      loadProject(project);
+    },
+    [loadProject],
+  );
+
   return {
     soundSources,
     modulators,
@@ -175,5 +337,12 @@ export function useAudioEngine() {
     deleteRoute,
     changeMasterVolume,
     togglePlayback,
+    loadAudioFile,
+    changeSourceType,
+    noteOn,
+    saveProject,
+    loadProject,
+    exportProjectFile,
+    importProjectFile,
   };
 }

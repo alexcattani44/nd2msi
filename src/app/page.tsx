@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useRef } from "react";
 import { SoundSourcePanel } from "@/components/organisms/SoundSourcePanel";
 import { RoutingMatrix } from "@/components/organisms/RoutingMatrix";
 import { ModulatorPanel } from "@/components/organisms/ModulatorPanel";
@@ -25,7 +25,26 @@ export default function Home() {
     deleteRoute,
     changeMasterVolume,
     togglePlayback,
+    loadAudioFile,
+    changeSourceType,
+    noteOn,
+    exportProjectFile,
+    importProjectFile,
   } = useAudioEngine();
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLoadProject = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await importProjectFile(file);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   return (
     <div className="flex flex-col h-screen">
@@ -55,8 +74,15 @@ export default function Home() {
             variant="primary"
             onClick={togglePlayback}
           />
-          <Button label="SAVE PROJECT" variant="secondary" />
-          <Button label="LOAD PROJECT" variant="secondary" />
+          <Button label="SAVE PROJECT" variant="secondary" onClick={exportProjectFile} />
+          <Button label="LOAD PROJECT" variant="secondary" onClick={handleLoadProject} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={handleFileSelect}
+          />
         </div>
       </header>
 
@@ -70,6 +96,9 @@ export default function Home() {
           onUpdateSource={updateSource}
           onDeleteSource={deleteSource}
           onMasterVolumeChange={changeMasterVolume}
+          onChangeSourceType={changeSourceType}
+          onLoadAudioFile={loadAudioFile}
+          onNoteOn={noteOn}
         />
 
         {/* Center: Routing Matrix */}

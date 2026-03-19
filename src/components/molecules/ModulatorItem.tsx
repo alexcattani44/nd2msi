@@ -4,7 +4,10 @@ import React, { useState, useRef, useEffect } from "react";
 import { Slider } from "@/components/atoms/Slider";
 import { Select } from "@/components/atoms/Select";
 import { Button } from "@/components/atoms/Button";
-import type { Modulator } from "@/types/sound";
+import { Toggle } from "@/components/atoms/Toggle";
+import type { Modulator, LfoShape } from "@/types/sound";
+import { LfoPreview } from "@/components/molecules/LfoPreview";
+import { EnvelopePreview } from "@/components/molecules/EnvelopePreview";
 import Papa from "papaparse";
 
 const SHAPE_OPTIONS = [
@@ -12,11 +15,21 @@ const SHAPE_OPTIONS = [
   { label: "Square", value: "square" },
   { label: "Sawtooth", value: "sawtooth" },
   { label: "Triangle", value: "triangle" },
+  { label: "Random (S&H)", value: "random" },
 ];
 
 const TYPE_OPTIONS = [
   { label: "LFO", value: "lfo" },
   { label: "Data-Driven", value: "data" },
+  { label: "Envelope", value: "envelope" },
+];
+
+const MIDI_CHANNEL_OPTIONS = [
+  { label: "All Channels", value: "0" },
+  ...Array.from({ length: 16 }, (_, i) => ({
+    label: `Channel ${i + 1}`,
+    value: String(i + 1),
+  })),
 ];
 
 interface ModulatorItemProps {
@@ -141,18 +154,19 @@ export function ModulatorItem({
             value={modulator.shape}
             options={SHAPE_OPTIONS}
             onChange={(v) =>
-              onUpdate(modulator.id, { shape: v as Modulator["shape"] })
+              onUpdate(modulator.id, { shape: v as LfoShape })
             }
           />
           <Slider
             label="Rate"
             value={modulator.rate}
-            min={0.1}
-            max={10}
-            step={0.1}
+            min={0.01}
+            max={20}
+            step={0.01}
             formatValue={(v) => `${v.toFixed(2)} Hz`}
             onChange={(v) => onUpdate(modulator.id, { rate: v })}
           />
+          <LfoPreview shape={modulator.shape} rate={modulator.rate} />
         </>
       )}
 
@@ -193,6 +207,25 @@ export function ModulatorItem({
             />
           </div>
 
+          <Slider
+            label="Rate"
+            value={modulator.dataRate}
+            min={5}
+            max={2000}
+            step={1}
+            formatValue={(v) => `${v < 1000 ? v.toFixed(0) + " ms" : (v / 1000).toFixed(2) + " s"}`}
+            onChange={(v) => onUpdate(modulator.id, { dataRate: v })}
+          />
+          <Slider
+            label="Smoothing"
+            value={modulator.dataSmoothing}
+            min={0}
+            max={1}
+            step={0.01}
+            formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+            onChange={(v) => onUpdate(modulator.id, { dataSmoothing: v })}
+          />
+
           {modulator.data && (
             <div className="mt-1 p-3 bg-bg-primary rounded">
               <div className="grid grid-cols-2 gap-2 mb-2">
@@ -224,7 +257,61 @@ export function ModulatorItem({
         </>
       )}
 
-      {/* Depth (shared by both types) */}
+      {/* Envelope (ADSR) controls */}
+      {modulator.type === "envelope" && (
+        <>
+          <Slider
+            label="Attack"
+            value={modulator.attack}
+            min={0.001}
+            max={5}
+            step={0.001}
+            formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
+            onChange={(v) => onUpdate(modulator.id, { attack: v })}
+          />
+          <Slider
+            label="Decay"
+            value={modulator.decay}
+            min={0.001}
+            max={5}
+            step={0.001}
+            formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
+            onChange={(v) => onUpdate(modulator.id, { decay: v })}
+          />
+          <Slider
+            label="Sustain"
+            value={modulator.sustain}
+            min={0}
+            max={1}
+            step={0.01}
+            formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+            onChange={(v) => onUpdate(modulator.id, { sustain: v })}
+          />
+          <Slider
+            label="Release"
+            value={modulator.release}
+            min={0.001}
+            max={10}
+            step={0.001}
+            formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
+            onChange={(v) => onUpdate(modulator.id, { release: v })}
+          />
+          <EnvelopePreview
+            attack={modulator.attack}
+            decay={modulator.decay}
+            sustain={modulator.sustain}
+            release={modulator.release}
+          />
+          <Select
+            label="MIDI Channel"
+            value={String(modulator.midiChannel)}
+            options={MIDI_CHANNEL_OPTIONS}
+            onChange={(v) => onUpdate(modulator.id, { midiChannel: parseInt(v) })}
+          />
+        </>
+      )}
+
+      {/* Depth (shared by all types) */}
       <Slider
         label="Depth"
         value={modulator.depth}

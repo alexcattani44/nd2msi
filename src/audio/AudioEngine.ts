@@ -5,26 +5,29 @@ import type {
   Modulator,
   Route,
   RoutableParam,
+  LfoShape,
 } from "@/types/sound";
 
 /**
  * Tone.js node graph per source:
- *   Synth ──┬──▶ Reverb ──┐
- *           └──▶ Delay  ──┤
- *                          ▼
- *                       Panner ──▶ Volume ──▶ master
  *
- * Modulation approach (data-driven):
- *   We use a setInterval loop that writes values directly into the
- *   Tone.js param. When the route is torn down we restore the
- *   source's baseline value so the sound source keeps working.
+ * Oscillator mode:
+ *   Synth ──▶ Filter? ──┬──▶ Reverb ──┐
+ *                        └──▶ Delay  ──┤
+ *                                       ▼
+ *                                    Panner ──▶ Volume ──▶ master
  *
- * Modulation approach (LFO):
- *   We use a Tone.js LFO node that is connected to the target param
- *   via Tone's signal graph. On teardown we disconnect + restore baseline.
+ * Sampler mode:
+ *   Player ──▶ PitchShift ──▶ Filter? ──┬──▶ Reverb ──┐
+ *                                        └──▶ Delay  ──┤
+ *                                                       ▼
+ *                                                    Panner ──▶ Volume ──▶ master
  */
-interface SourceNodes {
+
+interface OscillatorNodes {
+  type: "oscillator";
   synth: Tone.Synth;
+  filter: Tone.Filter;
   reverb: Tone.Reverb;
   delay: Tone.FeedbackDelay;
   panner: Tone.Panner;
@@ -32,27 +35,85 @@ interface SourceNodes {
   playing: boolean;
 }
 
-/** Stored baseline values for a source so we can restore after modulation. */
+interface SamplerNodes {
+  type: "sampler";
+  player: Tone.Player;
+  pitchShift: Tone.PitchShift;
+  filter: Tone.Filter;
+  reverb: Tone.Reverb;
+  delay: Tone.FeedbackDelay;
+  panner: Tone.Panner;
+  volume: Tone.Volume;
+  playing: boolean;
+  loaded: boolean;
+}
+
+type SourceNodes = OscillatorNodes | SamplerNodes;
+
 interface BaselineValues {
   frequency: number;
   volume: number;
   pan: number;
   reverbMix: number;
   delayMix: number;
+  playbackRate: number;
+  pitchShift: number;
+  filterFrequency: number;
 }
 
-/** Teardown handle for an active route. */
 interface ActiveRoute {
   disconnect(): void;
 }
 
+interface EnvelopeState {
+  value: number;
+  phase: "idle" | "attack" | "decay" | "sustain" | "release";
+  phaseStart: number;
+  attack: number;
+  decay: number;
+  sustain: number;
+  release: number;
+  rafId: number | null;
+}
+
+export type MidiNoteCallback = (channel: number, note: number, velocity: number, isNoteOn: boolean) => void;
+
+/** Convert a MIDI note number to frequency in Hz */
+export function midiNoteToFrequency(note: number): number {
+  return 440 * Math.pow(2, (note - 69) / 12);
+}
+
+/** Note names for display */
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+export function midiNoteToName(note: number): string {
+  const octave = Math.floor(note / 12) - 1;
+  return `${NOTE_NAMES[note % 12]}${octave}`;
+}
+
+/** Keyboard key to MIDI note mapping (computer keyboard as piano) */
+const KEYBOARD_NOTE_MAP: Record<string, number> = {
+  // Lower row: C3-B3
+  "z": 48, "s": 49, "x": 50, "d": 51, "c": 52, "v": 53, "g": 54,
+  "b": 55, "h": 56, "n": 57, "j": 58, "m": 59,
+  // Upper row: C4-E5
+  "q": 60, "2": 61, "w": 62, "3": 63, "e": 64, "r": 65, "5": 66,
+  "t": 67, "6": 68, "y": 69, "7": 70, "u": 71, "i": 72, "9": 73,
+  "o": 74, "0": 75, "p": 76,
+};
+
+export { KEYBOARD_NOTE_MAP };
+
 export class AudioEngine {
   private master: Tone.Volume;
   private sources: Map<string, SourceNodes> = new Map();
-  /** Baseline param values per source, captured from SoundSource state. */
   private baselines: Map<string, BaselineValues> = new Map();
   private lfos: Map<string, Tone.LFO> = new Map();
+  private randomIntervals: Map<string, ReturnType<typeof setInterval>> = new Map();
   private activeRoutes: Map<string, ActiveRoute> = new Map();
+  private envelopes: Map<string, EnvelopeState> = new Map();
+  private midiAccess: MIDIAccess | null = null;
+  private midiListeners: Map<string, MidiNoteCallback> = new Map();
+  private midiInputHandler: ((e: Event) => void) | null = null;
   private started = false;
 
   constructor(masterVolumeDb: number) {
@@ -80,6 +141,21 @@ export class AudioEngine {
       try { lfo.dispose(); } catch { /* ok */ }
     }
     this.lfos.clear();
+    for (const id of this.randomIntervals.keys()) {
+      clearInterval(this.randomIntervals.get(id)!);
+    }
+    this.randomIntervals.clear();
+    for (const env of this.envelopes.values()) {
+      if (env.rafId) cancelAnimationFrame(env.rafId);
+    }
+    this.envelopes.clear();
+    this.midiListeners.clear();
+    if (this.midiAccess && this.midiInputHandler) {
+      for (const input of this.midiAccess.inputs.values()) {
+        input.removeEventListener("midimessage", this.midiInputHandler);
+      }
+    }
+    this.midiAccess = null;
     this.master.dispose();
   }
 
@@ -87,6 +163,156 @@ export class AudioEngine {
 
   setMasterVolume(db: number): void {
     this.master.volume.value = db;
+  }
+
+  /* ── mute / solo ── */
+
+  updateMuteSolo(sources: SoundSource[]): void {
+    const anySolo = sources.some((s) => s.solo);
+    for (const source of sources) {
+      const nodes = this.sources.get(source.id);
+      if (!nodes) continue;
+      const shouldMute = source.muted || (anySolo && !source.solo);
+      nodes.volume.mute = shouldMute;
+    }
+  }
+
+  /* ── MIDI ── */
+
+  async initMidi(): Promise<boolean> {
+    if (this.midiAccess) return true;
+    if (!navigator.requestMIDIAccess) return false;
+    try {
+      this.midiAccess = await navigator.requestMIDIAccess();
+      this.midiInputHandler = (e: Event) => {
+        const msg = e as MIDIMessageEvent;
+        const data = msg.data;
+        if (!data || data.length < 3) return;
+        const status = data[0] & 0xf0;
+        const channel = (data[0] & 0x0f) + 1;
+        const note = data[1];
+        const velocity = data[2];
+
+        if (status === 0x90 || status === 0x80) {
+          const isNoteOn = status === 0x90 && velocity > 0;
+          for (const cb of this.midiListeners.values()) {
+            cb(channel, note, velocity, isNoteOn);
+          }
+        }
+      };
+      for (const input of this.midiAccess.inputs.values()) {
+        input.addEventListener("midimessage", this.midiInputHandler);
+      }
+      this.midiAccess.addEventListener("statechange", () => {
+        if (!this.midiAccess || !this.midiInputHandler) return;
+        for (const input of this.midiAccess.inputs.values()) {
+          input.removeEventListener("midimessage", this.midiInputHandler);
+          input.addEventListener("midimessage", this.midiInputHandler);
+        }
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  onMidiNote(id: string, callback: MidiNoteCallback): void {
+    this.midiListeners.set(id, callback);
+  }
+
+  offMidiNote(id: string): void {
+    this.midiListeners.delete(id);
+  }
+
+  /* ── envelope helpers ── */
+
+  triggerEnvelopeAttack(modId: string, attack: number, decay: number, sustain: number, release: number): void {
+    const existing = this.envelopes.get(modId);
+    if (existing?.rafId) cancelAnimationFrame(existing.rafId);
+
+    this.envelopes.set(modId, {
+      value: 0,
+      phase: "attack",
+      phaseStart: performance.now() / 1000,
+      attack,
+      decay,
+      sustain,
+      release,
+      rafId: null,
+    });
+  }
+
+  triggerEnvelopeRelease(modId: string): void {
+    const env = this.envelopes.get(modId);
+    if (!env || env.phase === "idle" || env.phase === "release") return;
+    env.phase = "release";
+    env.phaseStart = performance.now() / 1000;
+  }
+
+  getEnvelopeValue(modId: string): number {
+    const env = this.envelopes.get(modId);
+    if (!env || env.phase === "idle") return 0;
+
+    const now = performance.now() / 1000;
+    const elapsed = now - env.phaseStart;
+
+    switch (env.phase) {
+      case "attack": {
+        if (env.attack <= 0) {
+          env.value = 1;
+          env.phase = "decay";
+          env.phaseStart = now;
+          return 1;
+        }
+        const t = elapsed / env.attack;
+        if (t >= 1) {
+          env.value = 1;
+          env.phase = "decay";
+          env.phaseStart = now;
+          return 1;
+        }
+        env.value = t;
+        return t;
+      }
+      case "decay": {
+        if (env.decay <= 0) {
+          env.value = env.sustain;
+          env.phase = "sustain";
+          env.phaseStart = now;
+          return env.sustain;
+        }
+        const t = elapsed / env.decay;
+        if (t >= 1) {
+          env.value = env.sustain;
+          env.phase = "sustain";
+          env.phaseStart = now;
+          return env.sustain;
+        }
+        env.value = 1 - (1 - env.sustain) * t;
+        return env.value;
+      }
+      case "sustain":
+        env.value = env.sustain;
+        return env.sustain;
+      case "release": {
+        if (env.release <= 0) {
+          env.value = 0;
+          env.phase = "idle";
+          return 0;
+        }
+        const startVal = env.value;
+        const t = elapsed / env.release;
+        if (t >= 1) {
+          env.value = 0;
+          env.phase = "idle";
+          return 0;
+        }
+        env.value = startVal * (1 - t);
+        return env.value;
+      }
+      default:
+        return 0;
+    }
   }
 
   /* ── source management ── */
@@ -102,35 +328,79 @@ export class AudioEngine {
     const panner = new Tone.Panner(source.pan);
     const volume = new Tone.Volume(source.volume);
 
+    // Filter is always in the chain; when disabled, pass-through (20kHz lowpass)
+    const filter = new Tone.Filter({
+      frequency: source.filterEnabled ? source.filterFrequency : 20000,
+      type: source.filterEnabled ? source.filterType : "lowpass",
+      Q: source.filterEnabled ? source.filterQ : 0.1,
+    });
+
+    // Chain: source -> filter -> reverb + delay -> panner -> volume -> master
+    filter.connect(reverb);
+    filter.connect(delay);
     reverb.connect(panner);
     delay.connect(panner);
     panner.connect(volume);
     volume.connect(this.master);
 
-    const synth = new Tone.Synth({
-      oscillator: { type: source.waveform },
-      envelope: { attack: 0.1, decay: 0.2, sustain: 0.5, release: 1 },
-    });
-    synth.frequency.value = source.frequency;
-    synth.connect(reverb);
-    synth.connect(delay);
+    if (source.sourceType === "sampler") {
+      const pitchShiftNode = new Tone.PitchShift({
+        pitch: source.pitchShift,
+      });
+      const player = new Tone.Player({
+        loop: source.loopMode !== "none",
+        playbackRate: source.playbackRate,
+      });
 
-    this.sources.set(source.id, {
-      synth,
-      reverb,
-      delay,
-      panner,
-      volume,
-      playing: false,
-    });
+      player.connect(pitchShiftNode);
+      pitchShiftNode.connect(filter);
 
-    // Store baseline
+      this.sources.set(source.id, {
+        type: "sampler",
+        player,
+        pitchShift: pitchShiftNode,
+        filter,
+        reverb,
+        delay,
+        panner,
+        volume,
+        playing: false,
+        loaded: false,
+      });
+    } else {
+      // Build oscillator type, handling custom partials
+      const oscType = source.waveform === "custom" ? "sine" : source.waveform;
+      const synth = new Tone.Synth({
+        oscillator: { type: oscType },
+        envelope: { attack: 0.1, decay: 0.2, sustain: 0.5, release: 1 },
+      });
+      if (source.waveform === "custom" && source.customPartials.length > 0) {
+        (synth.oscillator as Tone.OmniOscillator<Tone.Oscillator>).partials = source.customPartials;
+      }
+      synth.frequency.value = source.frequency;
+      synth.connect(filter);
+
+      this.sources.set(source.id, {
+        type: "oscillator",
+        synth,
+        filter,
+        reverb,
+        delay,
+        panner,
+        volume,
+        playing: false,
+      });
+    }
+
     this.baselines.set(source.id, {
       frequency: source.frequency,
       volume: source.volume,
       pan: source.pan,
       reverbMix: source.reverbMix,
       delayMix: source.delayMix,
+      playbackRate: source.playbackRate,
+      pitchShift: source.pitchShift,
+      filterFrequency: source.filterFrequency,
     });
   }
 
@@ -138,7 +408,11 @@ export class AudioEngine {
     const nodes = this.sources.get(id);
     if (!nodes) return;
     if (nodes.playing) {
-      nodes.synth.triggerRelease();
+      if (nodes.type === "oscillator") {
+        nodes.synth.triggerRelease();
+      } else {
+        nodes.player.stop();
+      }
     }
     this.disposeSourceNodes(nodes);
     this.sources.delete(id);
@@ -149,16 +423,9 @@ export class AudioEngine {
     const nodes = this.sources.get(id);
     if (!nodes) return;
 
-    // Also update baseline so restore uses the latest user-set values
     const baseline = this.baselines.get(id);
 
-    if (updates.waveform !== undefined) {
-      nodes.synth.oscillator.type = updates.waveform as Waveform;
-    }
-    if (updates.frequency !== undefined) {
-      nodes.synth.frequency.value = updates.frequency;
-      if (baseline) baseline.frequency = updates.frequency;
-    }
+    // Shared params
     if (updates.volume !== undefined) {
       nodes.volume.volume.value = updates.volume;
       if (baseline) baseline.volume = updates.volume;
@@ -178,16 +445,113 @@ export class AudioEngine {
     if (updates.delayTime !== undefined) {
       nodes.delay.delayTime.value = updates.delayTime;
     }
+
+    // Filter params — filter node is always present
+    if (updates.filterEnabled !== undefined) {
+      if (updates.filterEnabled) {
+        // Re-apply the real filter settings
+        nodes.filter.frequency.value = updates.filterFrequency ?? 1000;
+        nodes.filter.type = updates.filterType ?? "lowpass";
+        nodes.filter.Q.value = updates.filterQ ?? 1;
+      } else {
+        // Bypass: set to pass-through
+        nodes.filter.frequency.value = 20000;
+        nodes.filter.type = "lowpass";
+        nodes.filter.Q.value = 0.1;
+      }
+    }
+    if (updates.filterFrequency !== undefined) {
+      nodes.filter.frequency.value = updates.filterFrequency;
+      if (baseline) baseline.filterFrequency = updates.filterFrequency;
+    }
+    if (updates.filterQ !== undefined) {
+      nodes.filter.Q.value = updates.filterQ;
+    }
+    if (updates.filterType !== undefined) {
+      nodes.filter.type = updates.filterType;
+    }
+
+    // Oscillator-specific
+    if (nodes.type === "oscillator") {
+      if (updates.waveform !== undefined) {
+        if (updates.waveform === "custom") {
+          // Setting partials will be handled by customPartials update
+        } else {
+          nodes.synth.oscillator.type = updates.waveform as Waveform;
+        }
+      }
+      if (updates.customPartials !== undefined && updates.customPartials.length > 0) {
+        try {
+          (nodes.synth.oscillator as Tone.OmniOscillator<Tone.Oscillator>).partials = updates.customPartials;
+        } catch { /* ok - may not be supported in current state */ }
+      }
+      if (updates.frequency !== undefined) {
+        nodes.synth.frequency.value = updates.frequency;
+        if (baseline) baseline.frequency = updates.frequency;
+      }
+    }
+
+    // Sampler-specific
+    if (nodes.type === "sampler") {
+      if (updates.playbackRate !== undefined) {
+        nodes.player.playbackRate = updates.playbackRate;
+        if (baseline) baseline.playbackRate = updates.playbackRate;
+      }
+      if (updates.pitchShift !== undefined) {
+        nodes.pitchShift.pitch = updates.pitchShift;
+        if (baseline) baseline.pitchShift = updates.pitchShift;
+      }
+      if (updates.loopMode !== undefined) {
+        nodes.player.loop = updates.loopMode !== "none";
+        if (updates.loopMode === "pingpong") {
+          nodes.player.reverse = false;
+        }
+      }
+      if (updates.sampleStart !== undefined && nodes.loaded) {
+        nodes.player.loopStart = updates.sampleStart * nodes.player.buffer.duration;
+      }
+      if (updates.sampleEnd !== undefined && nodes.loaded) {
+        nodes.player.loopEnd = updates.sampleEnd * nodes.player.buffer.duration;
+      }
+    }
+  }
+
+  async loadSampleBuffer(id: string, url: string): Promise<number> {
+    const nodes = this.sources.get(id);
+    if (!nodes || nodes.type !== "sampler") return 0;
+
+    const buffer = await Tone.ToneAudioBuffer.fromUrl(url);
+    nodes.player.buffer = buffer;
+    nodes.loaded = true;
+    return buffer.duration;
   }
 
   /* ── modulator management ── */
 
   addModulator(mod: Modulator): void {
-    if (this.lfos.has(mod.id)) return;
     if (mod.type === "lfo") {
-      const lfo = new Tone.LFO(mod.rate, 0, 1);
-      lfo.type = mod.shape;
-      this.lfos.set(mod.id, lfo);
+      if (this.lfos.has(mod.id)) return;
+      if (mod.shape === "random") {
+        // Random/S&H: use a regular LFO internally but we'll override via interval
+        const lfo = new Tone.LFO(mod.rate, 0, 1);
+        lfo.type = "square";
+        this.lfos.set(mod.id, lfo);
+      } else {
+        const lfo = new Tone.LFO(mod.rate, 0, 1);
+        lfo.type = mod.shape as OscillatorType;
+        this.lfos.set(mod.id, lfo);
+      }
+    } else if (mod.type === "envelope") {
+      this.envelopes.set(mod.id, {
+        value: 0,
+        phase: "idle",
+        phaseStart: 0,
+        attack: mod.attack,
+        decay: mod.decay,
+        sustain: mod.sustain,
+        release: mod.release,
+        rafId: null,
+      });
     }
   }
 
@@ -197,33 +561,75 @@ export class AudioEngine {
       try { lfo.stop(); lfo.dispose(); } catch { /* ok */ }
       this.lfos.delete(id);
     }
+    const ri = this.randomIntervals.get(id);
+    if (ri) {
+      clearInterval(ri);
+      this.randomIntervals.delete(id);
+    }
+    const env = this.envelopes.get(id);
+    if (env) {
+      if (env.rafId) cancelAnimationFrame(env.rafId);
+      this.envelopes.delete(id);
+    }
+    this.offMidiNote(id);
   }
 
   updateModulator(id: string, updates: Partial<Modulator>): void {
     const lfo = this.lfos.get(id);
     if (lfo) {
       if (updates.rate !== undefined) lfo.frequency.value = updates.rate;
-      if (updates.shape !== undefined) lfo.type = updates.shape;
+      if (updates.shape !== undefined && updates.shape !== "random") {
+        lfo.type = updates.shape as OscillatorType;
+      }
     }
-    if (updates.type === "data" && lfo) {
+    // Switching away from LFO
+    if (updates.type && updates.type !== "lfo" && lfo) {
       try { lfo.stop(); lfo.dispose(); } catch { /* ok */ }
       this.lfos.delete(id);
+      const ri = this.randomIntervals.get(id);
+      if (ri) { clearInterval(ri); this.randomIntervals.delete(id); }
     }
+    // Switching away from envelope
+    if (updates.type && updates.type !== "envelope") {
+      const env = this.envelopes.get(id);
+      if (env) {
+        if (env.rafId) cancelAnimationFrame(env.rafId);
+        this.envelopes.delete(id);
+      }
+      this.offMidiNote(id);
+    }
+    // Switching to LFO
     if (updates.type === "lfo" && !this.lfos.has(id)) {
+      const shape = (updates.shape as LfoShape) ?? "sine";
       const newLfo = new Tone.LFO(updates.rate ?? 1, 0, 1);
-      newLfo.type = (updates.shape as Waveform) ?? "sine";
+      newLfo.type = (shape === "random" ? "square" : shape) as OscillatorType;
       this.lfos.set(id, newLfo);
+    }
+    // Switching to envelope
+    if (updates.type === "envelope" && !this.envelopes.has(id)) {
+      this.envelopes.set(id, {
+        value: 0,
+        phase: "idle",
+        phaseStart: 0,
+        attack: updates.attack ?? 0.1,
+        decay: updates.decay ?? 0.2,
+        sustain: updates.sustain ?? 0.7,
+        release: updates.release ?? 0.5,
+        rafId: null,
+      });
+    }
+    // Update envelope ADSR params
+    const env = this.envelopes.get(id);
+    if (env) {
+      if (updates.attack !== undefined) env.attack = updates.attack;
+      if (updates.decay !== undefined) env.decay = updates.decay;
+      if (updates.sustain !== undefined) env.sustain = updates.sustain;
+      if (updates.release !== undefined) env.release = updates.release;
     }
   }
 
   /* ── route / modulation ── */
 
-  /**
-   * Re-apply all routes. Called by the hook's useEffect whenever routes,
-   * modulators, sources, or playing state change.
-   * Only the *last* route per (sourceId, parameter) pair wins —
-   * this prevents stacking that shifts base values.
-   */
   applyRoutes(
     routes: Route[],
     modulators: Modulator[],
@@ -231,7 +637,6 @@ export class AudioEngine {
   ): void {
     this.clearAllRoutes();
 
-    // Refresh baselines from current source state
     for (const source of sources) {
       this.baselines.set(source.id, {
         frequency: source.frequency,
@@ -239,10 +644,12 @@ export class AudioEngine {
         pan: source.pan,
         reverbMix: source.reverbMix,
         delayMix: source.delayMix,
+        playbackRate: source.playbackRate,
+        pitchShift: source.pitchShift,
+        filterFrequency: source.filterFrequency,
       });
     }
 
-    // De-dupe: keep only the last route per (sourceId, param) pair
     const effective = new Map<string, Route>();
     for (const route of routes) {
       const key = `${route.sourceId}:${route.parameter}`;
@@ -257,10 +664,21 @@ export class AudioEngine {
       const nodes = this.sources.get(route.sourceId);
       if (!nodes) continue;
 
+      // Skip invalid param/source combinations
+      if (nodes.type === "sampler" && route.parameter === "frequency") continue;
+      if (nodes.type === "oscillator" && (route.parameter === "playbackRate" || route.parameter === "pitchShift")) continue;
+      // filterFrequency is always available since filter is always in the chain
+
       if (mod.type === "lfo") {
-        this.applyLfoRoute(route, mod, nodes);
+        if (mod.shape === "random") {
+          this.applyRandomRoute(route, mod, nodes);
+        } else {
+          this.applyLfoRoute(route, mod, nodes);
+        }
       } else if (mod.type === "data" && mod.data) {
         this.applyDataRoute(route, mod, nodes);
+      } else if (mod.type === "envelope") {
+        this.applyEnvelopeRoute(route, mod, nodes);
       }
     }
   }
@@ -291,10 +709,17 @@ export class AudioEngine {
       }
       const nodes = this.sources.get(source.id)!;
       if (!nodes.playing) {
-        nodes.synth.triggerAttack(source.frequency);
+        if (nodes.type === "oscillator") {
+          nodes.synth.triggerAttack(source.frequency);
+        } else if (nodes.loaded) {
+          const startOffset = source.sampleStart * nodes.player.buffer.duration;
+          nodes.player.start(undefined, startOffset);
+        }
         nodes.playing = true;
       }
     }
+
+    this.updateMuteSolo(sources);
   }
 
   async startSource(source: SoundSource): Promise<void> {
@@ -304,7 +729,12 @@ export class AudioEngine {
     }
     const nodes = this.sources.get(source.id)!;
     if (!nodes.playing) {
-      nodes.synth.triggerAttack(source.frequency);
+      if (nodes.type === "oscillator") {
+        nodes.synth.triggerAttack(source.frequency);
+      } else if (nodes.loaded) {
+        const startOffset = source.sampleStart * nodes.player.buffer.duration;
+        nodes.player.start(undefined, startOffset);
+      }
       nodes.playing = true;
     }
   }
@@ -312,18 +742,25 @@ export class AudioEngine {
   stopAll(): void {
     for (const nodes of this.sources.values()) {
       if (nodes.playing) {
-        nodes.synth.triggerRelease();
+        if (nodes.type === "oscillator") {
+          nodes.synth.triggerRelease();
+        } else {
+          nodes.player.stop();
+        }
         nodes.playing = false;
       }
     }
   }
 
+  /** Set oscillator frequency directly (e.g. from keyboard/MIDI note) */
+  setSourceFrequency(id: string, freq: number): void {
+    const nodes = this.sources.get(id);
+    if (!nodes || nodes.type !== "oscillator") return;
+    nodes.synth.frequency.value = freq;
+  }
+
   /* ── internal: restore baseline ── */
 
-  /**
-   * Write the user-set value back into the Tone node for a given param.
-   * Called when a route is torn down so the source returns to normal.
-   */
   private restoreBaseline(sourceId: string, param: RoutableParam): void {
     const nodes = this.sources.get(sourceId);
     const baseline = this.baselines.get(sourceId);
@@ -331,7 +768,9 @@ export class AudioEngine {
 
     switch (param) {
       case "frequency":
-        nodes.synth.frequency.value = baseline.frequency;
+        if (nodes.type === "oscillator") {
+          nodes.synth.frequency.value = baseline.frequency;
+        }
         break;
       case "volume":
         nodes.volume.volume.value = baseline.volume;
@@ -344,6 +783,19 @@ export class AudioEngine {
         break;
       case "delayMix":
         nodes.delay.wet.value = baseline.delayMix;
+        break;
+      case "playbackRate":
+        if (nodes.type === "sampler") {
+          nodes.player.playbackRate = baseline.playbackRate;
+        }
+        break;
+      case "pitchShift":
+        if (nodes.type === "sampler") {
+          nodes.pitchShift.pitch = baseline.pitchShift;
+        }
+        break;
+      case "filterFrequency":
+        nodes.filter.frequency.value = baseline.filterFrequency;
         break;
     }
   }
@@ -386,12 +838,34 @@ export class AudioEngine {
     const depth = route.depth;
     const { min, max } = route;
 
-    // For all params: modulate between min..max, scaled by depth.
-    // depth=1 → full range, depth=0 → no modulation (midpoint).
     const mid = (min + max) / 2;
     const halfRange = ((max - min) / 2) * depth;
     lfo.min = mid - halfRange;
     lfo.max = mid + halfRange;
+  }
+
+  /* ── internal: random (S&H) route ── */
+
+  private applyRandomRoute(
+    route: Route,
+    mod: Modulator,
+    nodes: SourceNodes,
+  ): void {
+    const sourceId = route.sourceId;
+    const param = route.parameter;
+    const intervalMs = Math.max(20, 1000 / mod.rate);
+
+    const intervalId = setInterval(() => {
+      const randomVal = Math.random() * route.depth;
+      this.writeModulatedValue(route, randomVal, nodes);
+    }, intervalMs);
+
+    this.activeRoutes.set(route.id, {
+      disconnect: () => {
+        clearInterval(intervalId);
+        this.restoreBaseline(sourceId, param);
+      },
+    });
   }
 
   /* ── internal: data route ── */
@@ -409,20 +883,93 @@ export class AudioEngine {
     const dataRange = mod.dataMax - dataMin || 1;
     const sourceId = route.sourceId;
     const param = route.parameter;
+    const intervalMs = mod.dataRate || 50;
+    const smoothing = mod.dataSmoothing || 0;
 
-    const intervalId = setInterval(() => {
-      const raw = data[dataIndex];
-      // Normalize to 0..1
-      const normalized = (raw - dataMin) / dataRange;
+    if (smoothing > 0) {
+      // Smoothing: use a faster tick and interpolate between current and next point
+      const subSteps = Math.max(2, Math.round(smoothing * 20)); // 2-20 sub-steps
+      const subInterval = intervalMs / subSteps;
+      let subStep = 0;
 
-      this.writeModulatedValue(route, normalized * route.depth, nodes);
+      const intervalId = setInterval(() => {
+        const currRaw = data[dataIndex];
+        const nextRaw = data[(dataIndex + 1) % data.length];
+        const currNorm = (currRaw - dataMin) / dataRange;
+        const nextNorm = (nextRaw - dataMin) / dataRange;
 
-      dataIndex = (dataIndex + 1) % data.length;
-    }, 50);
+        const t = subStep / subSteps;
+        const interpolated = currNorm + (nextNorm - currNorm) * t;
+
+        this.writeModulatedValue(route, interpolated * route.depth, nodes);
+
+        subStep++;
+        if (subStep >= subSteps) {
+          subStep = 0;
+          dataIndex = (dataIndex + 1) % data.length;
+        }
+      }, subInterval);
+
+      this.activeRoutes.set(route.id, {
+        disconnect: () => {
+          clearInterval(intervalId);
+          this.restoreBaseline(sourceId, param);
+        },
+      });
+    } else {
+      // No smoothing: step directly between points
+      const intervalId = setInterval(() => {
+        const raw = data[dataIndex];
+        const normalized = (raw - dataMin) / dataRange;
+
+        this.writeModulatedValue(route, normalized * route.depth, nodes);
+
+        dataIndex = (dataIndex + 1) % data.length;
+      }, intervalMs);
+
+      this.activeRoutes.set(route.id, {
+        disconnect: () => {
+          clearInterval(intervalId);
+          this.restoreBaseline(sourceId, param);
+        },
+      });
+    }
+  }
+
+  /* ── internal: envelope route ── */
+
+  private applyEnvelopeRoute(
+    route: Route,
+    mod: Modulator,
+    nodes: SourceNodes,
+  ): void {
+    const sourceId = route.sourceId;
+    const param = route.parameter;
+    const modId = mod.id;
+
+    const midiChannel = mod.midiChannel;
+    this.onMidiNote(modId, (channel, _note, _velocity, isNoteOn) => {
+      if (midiChannel !== 0 && channel !== midiChannel) return;
+      if (isNoteOn) {
+        this.triggerEnvelopeAttack(modId, mod.attack, mod.decay, mod.sustain, mod.release);
+      } else {
+        this.triggerEnvelopeRelease(modId);
+      }
+    });
+
+    let running = true;
+    const tick = () => {
+      if (!running) return;
+      const envValue = this.getEnvelopeValue(modId);
+      this.writeModulatedValue(route, envValue * route.depth, nodes);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
 
     this.activeRoutes.set(route.id, {
       disconnect: () => {
-        clearInterval(intervalId);
+        running = false;
+        this.offMidiNote(modId);
         this.restoreBaseline(sourceId, param);
       },
     });
@@ -434,7 +981,7 @@ export class AudioEngine {
   private getTargetParam(param: RoutableParam, nodes: SourceNodes): any {
     switch (param) {
       case "frequency":
-        return nodes.synth.frequency;
+        return nodes.type === "oscillator" ? nodes.synth.frequency : null;
       case "volume":
         return nodes.volume.volume;
       case "pan":
@@ -443,15 +990,17 @@ export class AudioEngine {
         return nodes.reverb.wet;
       case "delayMix":
         return nodes.delay.wet;
+      case "playbackRate":
+        return null;
+      case "pitchShift":
+        return nodes.type === "sampler" ? nodes.pitchShift.pitch : null;
+      case "filterFrequency":
+        return nodes.filter.frequency;
       default:
         return null;
     }
   }
 
-  /**
-   * Write a modulated value using the route's min/max range.
-   * `t` is 0..1 (already multiplied by depth).
-   */
   private writeModulatedValue(
     route: Route,
     t: number,
@@ -462,11 +1011,11 @@ export class AudioEngine {
 
     switch (route.parameter) {
       case "frequency":
-        // Clamp to audible range
-        nodes.synth.frequency.value = Math.max(20, Math.min(20000, value));
+        if (nodes.type === "oscillator") {
+          nodes.synth.frequency.value = Math.max(20, Math.min(20000, value));
+        }
         break;
       case "volume":
-        // Clamp to reasonable dB range (avoid -Infinity or extreme values)
         nodes.volume.volume.value = Math.max(-60, Math.min(0, value));
         break;
       case "pan":
@@ -478,11 +1027,30 @@ export class AudioEngine {
       case "delayMix":
         nodes.delay.wet.value = Math.max(0, Math.min(1, value));
         break;
+      case "playbackRate":
+        if (nodes.type === "sampler") {
+          nodes.player.playbackRate = Math.max(0.1, Math.min(4, value));
+        }
+        break;
+      case "pitchShift":
+        if (nodes.type === "sampler") {
+          nodes.pitchShift.pitch = Math.max(-24, Math.min(24, value));
+        }
+        break;
+      case "filterFrequency":
+        nodes.filter.frequency.value = Math.max(20, Math.min(20000, value));
+        break;
     }
   }
 
   private disposeSourceNodes(nodes: SourceNodes): void {
-    try { nodes.synth.dispose(); } catch { /* already disposed */ }
+    if (nodes.type === "oscillator") {
+      try { nodes.synth.dispose(); } catch { /* already disposed */ }
+    } else {
+      try { nodes.player.dispose(); } catch { /* already disposed */ }
+      try { nodes.pitchShift.dispose(); } catch { /* already disposed */ }
+    }
+    try { nodes.filter.dispose(); } catch { /* already disposed */ }
     try { nodes.reverb.dispose(); } catch { /* already disposed */ }
     try { nodes.delay.dispose(); } catch { /* already disposed */ }
     try { nodes.panner.dispose(); } catch { /* already disposed */ }
