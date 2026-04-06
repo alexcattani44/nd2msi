@@ -2,8 +2,8 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { AudioEngine } from "@/audio/AudioEngine";
-import type { SoundSource, Modulator, Route } from "@/types/sound";
-import { createSoundSource, createModulator, createRoute } from "@/types/sound";
+import type { SoundSource, Modulator, Route, ListenerModeConfig, ListenerParameter, ListenerColorTheme } from "@/types/sound";
+import { createSoundSource, createModulator, createRoute, createDefaultListenerConfig, createListenerParameter } from "@/types/sound";
 
 /** Serializable project state for save/load */
 export interface ProjectState {
@@ -11,6 +11,7 @@ export interface ProjectState {
   modulators: Modulator[];
   routes: Route[];
   masterVolume: number;
+  listenerConfig?: ListenerModeConfig;
 }
 
 export function useAudioEngine() {
@@ -20,6 +21,9 @@ export function useAudioEngine() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [masterVolume, setMasterVolume] = useState(-12);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [listenerConfig, setListenerConfig] = useState<ListenerModeConfig>(createDefaultListenerConfig());
+  /** Snapshot of state when listener mode was entered, for reset */
+  const listenerSnapshotRef = useRef<ProjectState | null>(null);
 
   const getEngine = useCallback(() => {
     if (!engineRef.current) {
@@ -254,6 +258,89 @@ export function useAudioEngine() {
     }
   }, [getEngine, isPlaying]);
 
+  /* ── listener mode ── */
+  const enterListenerMode = useCallback(() => {
+    // Snapshot current state for reset
+    listenerSnapshotRef.current = {
+      soundSources: soundSources.map((s) => ({ ...s })),
+      modulators: modulators.map((m) => ({ ...m })),
+      routes: routes.map((r) => ({ ...r })),
+      masterVolume,
+    };
+    setListenerConfig((prev) => ({ ...prev, enabled: true }));
+  }, [soundSources, modulators, routes, masterVolume]);
+
+  const exitListenerMode = useCallback(() => {
+    setListenerConfig((prev) => ({ ...prev, enabled: false, fullscreen: false }));
+    listenerSnapshotRef.current = null;
+  }, []);
+
+  const toggleListenerFullscreen = useCallback(() => {
+    setListenerConfig((prev) => ({ ...prev, fullscreen: !prev.fullscreen }));
+  }, []);
+
+  const toggleListenerHelp = useCallback(() => {
+    setListenerConfig((prev) => ({ ...prev, showHelp: !prev.showHelp }));
+  }, []);
+
+  const setListenerTheme = useCallback((colorTheme: ListenerColorTheme) => {
+    setListenerConfig((prev) => ({ ...prev, colorTheme }));
+  }, []);
+
+  const addListenerParameter = useCallback(
+    (targetId: string, targetType: "source" | "modulator", parameter: string, label: string) => {
+      const param = createListenerParameter(targetId, targetType, parameter, label);
+      setListenerConfig((prev) => ({
+        ...prev,
+        parameters: [...prev.parameters, param],
+      }));
+    },
+    [],
+  );
+
+  const updateListenerParameter = useCallback(
+    (id: string, updates: Partial<ListenerParameter>) => {
+      setListenerConfig((prev) => ({
+        ...prev,
+        parameters: prev.parameters.map((p) =>
+          p.id === id ? { ...p, ...updates } : p,
+        ),
+      }));
+    },
+    [],
+  );
+
+  const deleteListenerParameter = useCallback((id: string) => {
+    setListenerConfig((prev) => ({
+      ...prev,
+      parameters: prev.parameters.filter((p) => p.id !== id),
+    }));
+  }, []);
+
+  const resetListenerState = useCallback(() => {
+    if (!listenerSnapshotRef.current) return;
+    const snapshot = listenerSnapshotRef.current;
+    const engine = getEngine();
+
+    // Stop playback
+    engine.clearAllRoutes();
+    engine.stopAll();
+    setIsPlaying(false);
+
+    // Restore sources
+    for (const s of sourcesRef.current) engine.removeSource(s.id);
+    for (const m of modulatorsRef.current) engine.removeModulator(m.id);
+
+    setSoundSources(snapshot.soundSources.map((s) => ({ ...s })));
+    setModulators(snapshot.modulators.map((m) => ({ ...m })));
+    setRoutes(snapshot.routes.map((r) => ({ ...r })));
+    setMasterVolume(snapshot.masterVolume);
+    engine.setMasterVolume(snapshot.masterVolume);
+
+    for (const source of snapshot.soundSources) engine.addSource(source);
+    for (const mod of snapshot.modulators) engine.addModulator(mod);
+  }, [getEngine]);
+
   /* ── save / load ── */
   const saveProject = useCallback((): ProjectState => {
     return {
@@ -261,8 +348,9 @@ export function useAudioEngine() {
       modulators: [...modulators],
       routes: [...routes],
       masterVolume,
+      listenerConfig,
     };
-  }, [soundSources, modulators, routes, masterVolume]);
+  }, [soundSources, modulators, routes, masterVolume, listenerConfig]);
 
   const loadProject = useCallback(
     (project: ProjectState) => {
@@ -287,6 +375,9 @@ export function useAudioEngine() {
       setSoundSources(project.soundSources);
       setModulators(project.modulators);
       setRoutes(project.routes);
+      if (project.listenerConfig) {
+        setListenerConfig(project.listenerConfig);
+      }
 
       // Re-add to engine
       for (const source of project.soundSources) {
@@ -326,6 +417,7 @@ export function useAudioEngine() {
     routes,
     masterVolume,
     isPlaying,
+    listenerConfig,
     addSource,
     updateSource,
     deleteSource,
@@ -344,5 +436,14 @@ export function useAudioEngine() {
     loadProject,
     exportProjectFile,
     importProjectFile,
+    enterListenerMode,
+    exitListenerMode,
+    toggleListenerFullscreen,
+    toggleListenerHelp,
+    setListenerTheme,
+    addListenerParameter,
+    updateListenerParameter,
+    deleteListenerParameter,
+    resetListenerState,
   };
 }

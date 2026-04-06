@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useEffect, useCallback } from "react";
 import { SoundSourcePanel } from "@/components/organisms/SoundSourcePanel";
 import { RoutingMatrix } from "@/components/organisms/RoutingMatrix";
 import { ModulatorPanel } from "@/components/organisms/ModulatorPanel";
+import { ListenerMode } from "@/components/organisms/ListenerMode";
+import { ListenerSetupPanel } from "@/components/organisms/ListenerSetupPanel";
 import { Button } from "@/components/atoms/Button";
 import { useAudioEngine } from "@/hooks/useAudioEngine";
 
@@ -14,6 +16,7 @@ export default function Home() {
     routes,
     masterVolume,
     isPlaying,
+    listenerConfig,
     addSource,
     updateSource,
     deleteSource,
@@ -30,9 +33,38 @@ export default function Home() {
     noteOn,
     exportProjectFile,
     importProjectFile,
+    enterListenerMode,
+    exitListenerMode,
+    toggleListenerFullscreen,
+    toggleListenerHelp,
+    setListenerTheme,
+    addListenerParameter,
+    updateListenerParameter,
+    deleteListenerParameter,
+    resetListenerState,
   } = useAudioEngine();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /* ── Fullscreen API integration ── */
+  const handleToggleFullscreen = useCallback(() => {
+    toggleListenerFullscreen();
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.();
+    } else {
+      document.exitFullscreen?.();
+    }
+  }, [toggleListenerFullscreen]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement && listenerConfig.fullscreen) {
+        toggleListenerFullscreen();
+      }
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, [listenerConfig.fullscreen, toggleListenerFullscreen]);
 
   const handleLoadProject = () => {
     fileInputRef.current?.click();
@@ -45,6 +77,34 @@ export default function Home() {
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
+  /* ── Listener Mode overlay ── */
+  if (listenerConfig.enabled) {
+    return (
+      <ListenerMode
+        config={listenerConfig}
+        soundSources={soundSources}
+        modulators={modulators}
+        isPlaying={isPlaying}
+        masterVolume={masterVolume}
+        onTogglePlayback={togglePlayback}
+        onUpdateSource={updateSource}
+        onUpdateModulator={updateModulator}
+        onChangeMasterVolume={changeMasterVolume}
+        onExit={() => {
+          if (document.fullscreenElement) document.exitFullscreen?.();
+          exitListenerMode();
+        }}
+        onToggleFullscreen={handleToggleFullscreen}
+        onToggleHelp={toggleListenerHelp}
+        onSetTheme={setListenerTheme}
+        onAddParameter={addListenerParameter}
+        onUpdateParameter={updateListenerParameter}
+        onDeleteParameter={deleteListenerParameter}
+        onReset={resetListenerState}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen">
@@ -74,6 +134,7 @@ export default function Home() {
             variant="primary"
             onClick={togglePlayback}
           />
+          <Button label="LISTENER MODE" variant="secondary" onClick={enterListenerMode} />
           <Button label="SAVE PROJECT" variant="secondary" onClick={exportProjectFile} />
           <Button label="LOAD PROJECT" variant="secondary" onClick={handleLoadProject} />
           <input
@@ -101,15 +162,28 @@ export default function Home() {
           onNoteOn={noteOn}
         />
 
-        {/* Center: Routing Matrix */}
-        <RoutingMatrix
-          routes={routes}
-          soundSources={soundSources}
-          modulators={modulators}
-          onAddRoute={addRoute}
-          onUpdateRoute={updateRoute}
-          onDeleteRoute={deleteRoute}
-        />
+        {/* Center: Routing Matrix + Listener Setup */}
+        <div className="bg-bg-primary border-x border-border-color p-4 flex flex-col gap-4 overflow-y-auto">
+          <RoutingMatrix
+            routes={routes}
+            soundSources={soundSources}
+            modulators={modulators}
+            onAddRoute={addRoute}
+            onUpdateRoute={updateRoute}
+            onDeleteRoute={deleteRoute}
+          />
+
+          {/* Listener Mode Setup */}
+          <ListenerSetupPanel
+            config={listenerConfig}
+            soundSources={soundSources}
+            modulators={modulators}
+            onAddParameter={addListenerParameter}
+            onUpdateParameter={updateListenerParameter}
+            onDeleteParameter={deleteListenerParameter}
+            onEnterListenerMode={enterListenerMode}
+          />
+        </div>
 
         {/* Right: Modulators */}
         <ModulatorPanel

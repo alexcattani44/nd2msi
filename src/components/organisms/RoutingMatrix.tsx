@@ -38,7 +38,7 @@ export function RoutingMatrix({
   );
 
   return (
-    <div className="bg-bg-primary border-x border-border-color p-4 flex flex-col gap-4 overflow-y-auto">
+    <div className="flex flex-col gap-4">
       <h2 className="font-display font-bold text-base uppercase tracking-widest text-accent-primary border-b border-border-color pb-2">
         Routing Matrix
       </h2>

@@ -5,6 +5,7 @@ import { Slider } from "@/components/atoms/Slider";
 import { Select } from "@/components/atoms/Select";
 import { Button } from "@/components/atoms/Button";
 import { Toggle } from "@/components/atoms/Toggle";
+import { EditableName } from "@/components/atoms/EditableName";
 import type { SoundSource, SourceType, LoopMode, FilterType } from "@/types/sound";
 import { midiNoteToName, midiNoteToFrequency, KEYBOARD_NOTE_MAP } from "@/audio/AudioEngine";
 
@@ -112,9 +113,11 @@ export function SoundSourceItem({
     >
       {/* Header: name + mute/solo + delete */}
       <div className="flex items-center justify-between">
-        <span className="font-display font-bold text-sm text-accent-primary tracking-wide">
-          {source.name}
-        </span>
+        <EditableName
+          value={source.name}
+          onChange={(name) => onUpdate(source.id, { name })}
+          className="text-sm"
+        />
         <div className="flex items-center gap-1">
           <Toggle
             label="M"

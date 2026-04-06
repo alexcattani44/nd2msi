@@ -5,6 +5,7 @@ import { Slider } from "@/components/atoms/Slider";
 import { Select } from "@/components/atoms/Select";
 import { Button } from "@/components/atoms/Button";
 import { Toggle } from "@/components/atoms/Toggle";
+import { EditableName } from "@/components/atoms/EditableName";
 import type { Modulator, LfoShape } from "@/types/sound";
 import { LfoPreview } from "@/components/molecules/LfoPreview";
 import { EnvelopePreview } from "@/components/molecules/EnvelopePreview";
@@ -127,9 +128,11 @@ export function ModulatorItem({
     <div className="bg-bg-tertiary border border-border-color rounded-md p-3 flex flex-col gap-3">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <span className="font-display font-bold text-sm text-accent-primary tracking-wide">
-          {modulator.name}
-        </span>
+        <EditableName
+          value={modulator.name}
+          onChange={(name) => onUpdate(modulator.id, { name })}
+          className="text-sm"
+        />
         <Button
           label="DELETE"
           variant="danger"
