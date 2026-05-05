@@ -65,7 +65,7 @@ function ListenerMark({
       className={`w-4 h-4 rounded-full border text-[8px] leading-none flex items-center justify-center cursor-pointer transition-all shrink-0 ${
         active
           ? "bg-success/30 border-success text-success"
-          : "bg-transparent border-border-color text-text-secondary hover:border-success/50"
+          : "bg-transparent border-border-color/50 text-text-secondary hover:border-success"
       }`}
       title={active ? "Visible in listener mode (click to hide)" : "Hidden in listener mode (click to show)"}
     >
