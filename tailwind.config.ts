@@ -26,8 +26,6 @@ const config: Config = {
         mono: ["JetBrains Mono", "monospace"],
         display: ["Syne", "sans-serif"],
       },
-      borderWidth: ['hover', 'focus'],
-      borderStyle: ['hover', 'focus'],
     },
   },
   plugins: [],
