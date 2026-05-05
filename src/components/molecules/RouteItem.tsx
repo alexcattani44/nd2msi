@@ -51,7 +51,11 @@ function ListenerMark({
           ? "bg-success/30 border-success text-success"
           : "bg-transparent border-border-color/50 text-text-secondary hover:border-success"
       }`}
-      title={active ? "Visible in listener mode (click to hide)" : "Hidden in listener mode (click to show)"}
+      title={
+        active
+          ? "Visible in listener mode (click to hide)"
+          : "Hidden in listener mode (click to show)"
+      }
     >
       L
     </button>
@@ -133,21 +137,43 @@ export function RouteItem({
     return SAMPLER_PARAMS;
   }, [source]);
 
-  const showRange = route.parameter === "frequency"
-    || route.parameter === "playbackRate"
-    || route.parameter === "pitchShift"
-    || route.parameter === "filterFrequency";
+  const showRange =
+    route.parameter === "frequency" ||
+    route.parameter === "playbackRate" ||
+    route.parameter === "pitchShift" ||
+    route.parameter === "filterFrequency";
 
   const rangeConfig = useMemo(() => {
     switch (route.parameter) {
       case "frequency":
-        return { minBound: 20, maxBound: 2000, step: 1, format: (v: number) => `${v.toFixed(0)} Hz` };
+        return {
+          minBound: 20,
+          maxBound: 2000,
+          step: 1,
+          format: (v: number) => `${v.toFixed(0)} Hz`,
+        };
       case "playbackRate":
-        return { minBound: 0.1, maxBound: 4, step: 0.01, format: (v: number) => `${v.toFixed(2)}x` };
+        return {
+          minBound: 0.1,
+          maxBound: 4,
+          step: 0.01,
+          format: (v: number) => `${v.toFixed(2)}x`,
+        };
       case "pitchShift":
-        return { minBound: -24, maxBound: 24, step: 1, format: (v: number) => `${v > 0 ? "+" : ""}${v} st` };
+        return {
+          minBound: -24,
+          maxBound: 24,
+          step: 1,
+          format: (v: number) => `${v > 0 ? "+" : ""}${v} st`,
+        };
       case "filterFrequency":
-        return { minBound: 20, maxBound: 20000, step: 1, format: (v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)} kHz` : `${v.toFixed(0)} Hz` };
+        return {
+          minBound: 20,
+          maxBound: 20000,
+          step: 1,
+          format: (v: number) =>
+            v >= 1000 ? `${(v / 1000).toFixed(1)} kHz` : `${v.toFixed(0)} Hz`,
+        };
       default:
         return null;
     }
@@ -169,7 +195,7 @@ export function RouteItem({
     <div className="bg-bg-tertiary border border-border-color rounded-md p-3 flex flex-col gap-3">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <span className="text-sm text-accent-primary font-mono">
+        <span className="text-sm text-accent-primary font-display font-bold">
           {modulator?.name ?? "?"} → {source?.name ?? "?"}
         </span>
         {!isListenerMode && (
@@ -206,7 +232,10 @@ export function RouteItem({
               const newSource = soundSources.find((s) => s.id === v);
               const updates: Partial<Route> = { sourceId: v };
               if (newSource) {
-                const validParams = newSource.sourceType === "sampler" ? SAMPLER_PARAMS : OSCILLATOR_PARAMS;
+                const validParams =
+                  newSource.sourceType === "sampler"
+                    ? SAMPLER_PARAMS
+                    : OSCILLATOR_PARAMS;
                 if (!validParams.some((p) => p.value === route.parameter)) {
                   const newParam = validParams[0].value as RoutableParam;
                   const defaults = getDefaultRange(newParam);
@@ -236,7 +265,8 @@ export function RouteItem({
         </>
       )}
 
-      {p("depth",
+      {p(
+        "depth",
         <Slider
           label="Modulation Depth"
           value={route.depth}
@@ -245,12 +275,13 @@ export function RouteItem({
           step={0.01}
           formatValue={(v) => `${(v * 100).toFixed(0)}%`}
           onChange={(v) => onUpdate(route.id, { depth: v })}
-        />
+        />,
       )}
 
       {showRange && rangeConfig && (
         <>
-          {p("min",
+          {p(
+            "min",
             <Slider
               label={`Min ${route.parameter}`}
               value={route.min}
@@ -259,9 +290,10 @@ export function RouteItem({
               step={rangeConfig.step}
               formatValue={rangeConfig.format}
               onChange={(v) => onUpdate(route.id, { min: v })}
-            />
+            />,
           )}
-          {p("max",
+          {p(
+            "max",
             <Slider
               label={`Max ${route.parameter}`}
               value={route.max}
@@ -270,7 +302,7 @@ export function RouteItem({
               step={rangeConfig.step}
               formatValue={rangeConfig.format}
               onChange={(v) => onUpdate(route.id, { max: v })}
-            />
+            />,
           )}
         </>
       )}
@@ -283,7 +315,9 @@ export function RouteItem({
       )}
       {!isListenerMode && modulator?.type === "envelope" && (
         <div className="text-xs text-success bg-bg-primary rounded p-2 mt-1">
-          Envelope (A:{modulator.attack}s D:{modulator.decay}s S:{(modulator.sustain * 100).toFixed(0)}% R:{modulator.release}s) → {route.parameter}
+          Envelope (A:{modulator.attack}s D:{modulator.decay}s S:
+          {(modulator.sustain * 100).toFixed(0)}% R:{modulator.release}s) →{" "}
+          {route.parameter}
         </div>
       )}
       {!isListenerMode && modulator?.type === "data" && modulator.data && (

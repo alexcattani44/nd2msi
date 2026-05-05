@@ -101,8 +101,16 @@ export default function Home() {
 
           {!isListenerMode && (
             <>
-              <Button label="SAVE PROJECT" variant="secondary" onClick={exportProjectFile} />
-              <Button label="LOAD PROJECT" variant="secondary" onClick={handleLoadProject} />
+              <Button
+                label="SAVE PROJECT"
+                variant="secondary"
+                onClick={exportProjectFile}
+              />
+              <Button
+                label="LOAD PROJECT"
+                variant="secondary"
+                onClick={handleLoadProject}
+              />
               <input
                 ref={fileInputRef}
                 type="file"
@@ -114,9 +122,7 @@ export default function Home() {
           )}
 
           {isListenerMode && (
-            <span className="text-xs text-text-secondary">
-              ESC to exit
-            </span>
+            <span className="text-xs text-text-secondary">ESC to exit</span>
           )}
         </div>
       </header>
