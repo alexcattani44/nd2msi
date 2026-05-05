@@ -9,6 +9,7 @@ import type { SoundSource, SourceType } from "@/types/sound";
 interface SoundSourcePanelProps {
   sources: SoundSource[];
   masterVolume: number;
+  isListenerMode: boolean;
   onAddSource: () => void;
   onUpdateSource: (id: string, updates: Partial<SoundSource>) => void;
   onDeleteSource: (id: string) => void;
@@ -16,11 +17,15 @@ interface SoundSourcePanelProps {
   onChangeSourceType: (id: string, type: SourceType) => void;
   onLoadAudioFile: (id: string, file: File) => void;
   onNoteOn?: (sourceId: string, frequency: number) => void;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggleListenerParam: (targetId: string, parameter: string) => void;
+  hasAnyListenerParams: (targetId: string) => boolean;
 }
 
 export function SoundSourcePanel({
   sources,
   masterVolume,
+  isListenerMode,
   onAddSource,
   onUpdateSource,
   onDeleteSource,
@@ -28,36 +33,50 @@ export function SoundSourcePanel({
   onChangeSourceType,
   onLoadAudioFile,
   onNoteOn,
+  isListenerParam,
+  onToggleListenerParam,
+  hasAnyListenerParams,
 }: SoundSourcePanelProps) {
+  const visibleSources = isListenerMode
+    ? sources.filter((s) => hasAnyListenerParams(s.id))
+    : sources;
+
   return (
     <div className="bg-bg-secondary border border-border-color rounded-lg p-4 flex flex-col gap-4 overflow-y-auto">
       <h2 className="font-display font-bold text-base uppercase tracking-widest text-accent-primary border-b border-border-color pb-2">
         Sound Sources
       </h2>
 
-      <Button
-        label="+ Add Sound Source"
-        variant="secondary"
-        fullWidth
-        dashed
-        onClick={onAddSource}
-      />
+      {!isListenerMode && (
+        <Button
+          label="+ Add Sound Source"
+          variant="secondary"
+          fullWidth
+          dashed
+          onClick={onAddSource}
+        />
+      )}
 
-      {sources.length === 0 ? (
+      {visibleSources.length === 0 ? (
         <p className="text-center text-sm text-text-secondary py-8">
-          No sound sources yet. Click above to add one.
+          {isListenerMode
+            ? "No parameters exposed for listener mode."
+            : "No sound sources yet. Click above to add one."}
         </p>
       ) : (
         <div className="flex flex-col gap-3">
-          {sources.map((source) => (
+          {visibleSources.map((source) => (
             <SoundSourceItem
               key={source.id}
               source={source}
+              isListenerMode={isListenerMode}
               onUpdate={onUpdateSource}
               onDelete={onDeleteSource}
               onChangeType={onChangeSourceType}
               onLoadFile={onLoadAudioFile}
               onNoteOn={onNoteOn}
+              isListenerParam={isListenerParam}
+              onToggleListenerParam={onToggleListenerParam}
             />
           ))}
         </div>

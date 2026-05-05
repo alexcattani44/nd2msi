@@ -155,6 +155,13 @@ export function createRoute(
   };
 }
 
+/* ── Listener Mode ── */
+
+export interface ListenerParam {
+  targetId: string;
+  parameter: string;
+}
+
 /**
  * Sensible, audible default ranges per parameter.
  * Volume stays in -30..0 dB to avoid inaudible silence or clipping.

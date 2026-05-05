@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useEffect } from "react";
 import { SoundSourcePanel } from "@/components/organisms/SoundSourcePanel";
 import { RoutingMatrix } from "@/components/organisms/RoutingMatrix";
 import { ModulatorPanel } from "@/components/organisms/ModulatorPanel";
 import { Button } from "@/components/atoms/Button";
+import { Toggle } from "@/components/atoms/Toggle";
 import { useAudioEngine } from "@/hooks/useAudioEngine";
 
 export default function Home() {
@@ -14,6 +15,8 @@ export default function Home() {
     routes,
     masterVolume,
     isPlaying,
+    isListenerMode,
+    listenerParams,
     addSource,
     updateSource,
     deleteSource,
@@ -30,9 +33,23 @@ export default function Home() {
     noteOn,
     exportProjectFile,
     importProjectFile,
+    toggleListenerMode,
+    toggleListenerParam,
+    isListenerParam,
+    hasAnyListenerParams,
   } = useAudioEngine();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /* ── Escape key exits listener mode ── */
+  useEffect(() => {
+    if (!isListenerMode) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") toggleListenerMode();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isListenerMode, toggleListenerMode]);
 
   const handleLoadProject = () => {
     fileInputRef.current?.click();
@@ -74,15 +91,33 @@ export default function Home() {
             variant="primary"
             onClick={togglePlayback}
           />
-          <Button label="SAVE PROJECT" variant="secondary" onClick={exportProjectFile} />
-          <Button label="LOAD PROJECT" variant="secondary" onClick={handleLoadProject} />
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json"
-            className="hidden"
-            onChange={handleFileSelect}
+
+          <Toggle
+            label="LISTENER"
+            active={isListenerMode}
+            activeColor="success"
+            onChange={toggleListenerMode}
           />
+
+          {!isListenerMode && (
+            <>
+              <Button label="SAVE PROJECT" variant="secondary" onClick={exportProjectFile} />
+              <Button label="LOAD PROJECT" variant="secondary" onClick={handleLoadProject} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+            </>
+          )}
+
+          {isListenerMode && (
+            <span className="text-xs text-text-secondary">
+              ESC to exit
+            </span>
+          )}
         </div>
       </header>
 
@@ -92,6 +127,7 @@ export default function Home() {
         <SoundSourcePanel
           sources={soundSources}
           masterVolume={masterVolume}
+          isListenerMode={isListenerMode}
           onAddSource={addSource}
           onUpdateSource={updateSource}
           onDeleteSource={deleteSource}
@@ -99,24 +135,37 @@ export default function Home() {
           onChangeSourceType={changeSourceType}
           onLoadAudioFile={loadAudioFile}
           onNoteOn={noteOn}
+          isListenerParam={isListenerParam}
+          onToggleListenerParam={toggleListenerParam}
+          hasAnyListenerParams={hasAnyListenerParams}
         />
 
         {/* Center: Routing Matrix */}
-        <RoutingMatrix
-          routes={routes}
-          soundSources={soundSources}
-          modulators={modulators}
-          onAddRoute={addRoute}
-          onUpdateRoute={updateRoute}
-          onDeleteRoute={deleteRoute}
-        />
+        <div className="bg-bg-primary border-x border-border-color p-4 flex flex-col gap-4 overflow-y-auto">
+          <RoutingMatrix
+            routes={routes}
+            soundSources={soundSources}
+            modulators={modulators}
+            isListenerMode={isListenerMode}
+            onAddRoute={addRoute}
+            onUpdateRoute={updateRoute}
+            onDeleteRoute={deleteRoute}
+            isListenerParam={isListenerParam}
+            onToggleListenerParam={toggleListenerParam}
+            hasAnyListenerParams={hasAnyListenerParams}
+          />
+        </div>
 
         {/* Right: Modulators */}
         <ModulatorPanel
           modulators={modulators}
+          isListenerMode={isListenerMode}
           onAddModulator={addModulator}
           onUpdateModulator={updateModulator}
           onDeleteModulator={deleteModulator}
+          isListenerParam={isListenerParam}
+          onToggleListenerParam={toggleListenerParam}
+          hasAnyListenerParams={hasAnyListenerParams}
         />
       </main>
     </div>

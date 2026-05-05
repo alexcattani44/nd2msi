@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { AudioEngine } from "@/audio/AudioEngine";
-import type { SoundSource, Modulator, Route } from "@/types/sound";
+import type { SoundSource, Modulator, Route, ListenerParam } from "@/types/sound";
 import { createSoundSource, createModulator, createRoute } from "@/types/sound";
 
 /** Serializable project state for save/load */
@@ -11,6 +11,7 @@ export interface ProjectState {
   modulators: Modulator[];
   routes: Route[];
   masterVolume: number;
+  listenerParams?: ListenerParam[];
 }
 
 export function useAudioEngine() {
@@ -20,6 +21,8 @@ export function useAudioEngine() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [masterVolume, setMasterVolume] = useState(-12);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isListenerMode, setIsListenerMode] = useState(false);
+  const [listenerParams, setListenerParams] = useState<ListenerParam[]>([]);
 
   const getEngine = useCallback(() => {
     if (!engineRef.current) {
@@ -172,6 +175,7 @@ export function useAudioEngine() {
       getEngine().removeSource(id);
       setSoundSources((prev) => prev.filter((s) => s.id !== id));
       setRoutes((prev) => prev.filter((r) => r.sourceId !== id));
+      setListenerParams((prev) => prev.filter((p) => p.targetId !== id));
     },
     [getEngine],
   );
@@ -208,6 +212,7 @@ export function useAudioEngine() {
       getEngine().removeModulator(id);
       setModulators((prev) => prev.filter((m) => m.id !== id));
       setRoutes((prev) => prev.filter((r) => r.modulatorId !== id));
+      setListenerParams((prev) => prev.filter((p) => p.targetId !== id));
     },
     [getEngine],
   );
@@ -254,6 +259,44 @@ export function useAudioEngine() {
     }
   }, [getEngine, isPlaying]);
 
+  /* ── listener mode ── */
+  const toggleListenerMode = useCallback(() => {
+    setIsListenerMode((prev) => !prev);
+  }, []);
+
+  const toggleListenerParam = useCallback(
+    (targetId: string, parameter: string) => {
+      setListenerParams((prev) => {
+        const exists = prev.some(
+          (p) => p.targetId === targetId && p.parameter === parameter,
+        );
+        if (exists) {
+          return prev.filter(
+            (p) => !(p.targetId === targetId && p.parameter === parameter),
+          );
+        }
+        return [...prev, { targetId, parameter }];
+      });
+    },
+    [],
+  );
+
+  const isListenerParam = useCallback(
+    (targetId: string, parameter: string) => {
+      return listenerParams.some(
+        (p) => p.targetId === targetId && p.parameter === parameter,
+      );
+    },
+    [listenerParams],
+  );
+
+  const hasAnyListenerParams = useCallback(
+    (targetId: string) => {
+      return listenerParams.some((p) => p.targetId === targetId);
+    },
+    [listenerParams],
+  );
+
   /* ── save / load ── */
   const saveProject = useCallback((): ProjectState => {
     return {
@@ -261,8 +304,9 @@ export function useAudioEngine() {
       modulators: [...modulators],
       routes: [...routes],
       masterVolume,
+      listenerParams,
     };
-  }, [soundSources, modulators, routes, masterVolume]);
+  }, [soundSources, modulators, routes, masterVolume, listenerParams]);
 
   const loadProject = useCallback(
     (project: ProjectState) => {
@@ -287,6 +331,7 @@ export function useAudioEngine() {
       setSoundSources(project.soundSources);
       setModulators(project.modulators);
       setRoutes(project.routes);
+      setListenerParams(project.listenerParams ?? []);
 
       // Re-add to engine
       for (const source of project.soundSources) {
@@ -326,6 +371,8 @@ export function useAudioEngine() {
     routes,
     masterVolume,
     isPlaying,
+    isListenerMode,
+    listenerParams,
     addSource,
     updateSource,
     deleteSource,
@@ -344,5 +391,9 @@ export function useAudioEngine() {
     loadProject,
     exportProjectFile,
     importProjectFile,
+    toggleListenerMode,
+    toggleListenerParam,
+    isListenerParam,
+    hasAnyListenerParams,
   };
 }

@@ -31,22 +31,90 @@ const SAMPLER_PARAMS = [
   { label: "Pitch Shift", value: "pitchShift" },
 ];
 
+function ListenerMark({
+  targetId,
+  parameter,
+  isListenerParam,
+  onToggle,
+}: {
+  targetId: string;
+  parameter: string;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggle: (targetId: string, parameter: string) => void;
+}) {
+  const active = isListenerParam(targetId, parameter);
+  return (
+    <button
+      onClick={() => onToggle(targetId, parameter)}
+      className={`w-4 h-4 rounded-full border text-[8px] leading-none flex items-center justify-center cursor-pointer transition-all shrink-0 ${
+        active
+          ? "bg-success/30 border-success text-success"
+          : "bg-transparent border-border-color/50 text-text-secondary hover:border-success"
+      }`}
+      title={active ? "Visible in listener mode (click to hide)" : "Hidden in listener mode (click to show)"}
+    >
+      L
+    </button>
+  );
+}
+
+function ParamRow({
+  targetId,
+  parameter,
+  isListenerMode,
+  isListenerParam,
+  onToggleListenerParam,
+  children,
+}: {
+  targetId: string;
+  parameter: string;
+  isListenerMode: boolean;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggleListenerParam: (targetId: string, parameter: string) => void;
+  children: React.ReactNode;
+}) {
+  const visible = isListenerParam(targetId, parameter);
+  if (isListenerMode && !visible) return null;
+
+  return (
+    <div className="flex items-start gap-1.5">
+      {!isListenerMode && (
+        <div className="pt-2.5">
+          <ListenerMark
+            targetId={targetId}
+            parameter={parameter}
+            isListenerParam={isListenerParam}
+            onToggle={onToggleListenerParam}
+          />
+        </div>
+      )}
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}
+
 interface RouteItemProps {
   route: Route;
   soundSources: SoundSource[];
   modulators: Modulator[];
+  isListenerMode: boolean;
   isDuplicate: boolean;
   onUpdate: (id: string, updates: Partial<Route>) => void;
   onDelete: (id: string) => void;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggleListenerParam: (targetId: string, parameter: string) => void;
 }
 
 export function RouteItem({
   route,
   soundSources,
   modulators,
+  isListenerMode,
   isDuplicate,
   onUpdate,
   onDelete,
+  isListenerParam: isLP,
+  onToggleListenerParam: onToggleLP,
 }: RouteItemProps) {
   const source = soundSources.find((s) => s.id === route.sourceId);
   const modulator = modulators.find((m) => m.id === route.modulatorId);
@@ -85,6 +153,18 @@ export function RouteItem({
     }
   }, [route.parameter]);
 
+  const p = (param: string, children: React.ReactNode) => (
+    <ParamRow
+      targetId={route.id}
+      parameter={param}
+      isListenerMode={isListenerMode}
+      isListenerParam={isLP}
+      onToggleListenerParam={onToggleLP}
+    >
+      {children}
+    </ParamRow>
+  );
+
   return (
     <div className="bg-bg-tertiary border border-border-color rounded-md p-3 flex flex-col gap-3">
       {/* Header */}
@@ -92,114 +172,126 @@ export function RouteItem({
         <span className="text-sm text-accent-primary font-mono">
           {modulator?.name ?? "?"} → {source?.name ?? "?"}
         </span>
-        <Button
-          label="DELETE"
-          variant="danger"
-          size="sm"
-          onClick={() => onDelete(route.id)}
-        />
+        {!isListenerMode && (
+          <Button
+            label="DELETE"
+            variant="danger"
+            size="sm"
+            onClick={() => onDelete(route.id)}
+          />
+        )}
       </div>
 
-      {isDuplicate && (
+      {!isListenerMode && isDuplicate && (
         <div className="text-xs text-danger bg-danger/10 border border-danger/30 rounded p-2">
           Another route already targets {source?.name ?? "this source"}&apos;s{" "}
           {route.parameter}. Only one route per source+parameter is applied.
         </div>
       )}
 
-      <Select
-        label="Modulator"
-        value={route.modulatorId}
-        options={modulatorOptions}
-        onChange={(v) => onUpdate(route.id, { modulatorId: v })}
-      />
-
-      <Select
-        label="Sound Source"
-        value={route.sourceId}
-        options={sourceOptions}
-        onChange={(v) => {
-          const newSource = soundSources.find((s) => s.id === v);
-          const updates: Partial<Route> = { sourceId: v };
-          if (newSource) {
-            const validParams = newSource.sourceType === "sampler" ? SAMPLER_PARAMS : OSCILLATOR_PARAMS;
-            if (!validParams.some((p) => p.value === route.parameter)) {
-              const newParam = validParams[0].value as RoutableParam;
-              const defaults = getDefaultRange(newParam);
-              updates.parameter = newParam;
-              updates.min = defaults.min;
-              updates.max = defaults.max;
-            }
-          }
-          onUpdate(route.id, updates);
-        }}
-      />
-
-      <Select
-        label="Parameter"
-        value={route.parameter}
-        options={parameterOptions}
-        onChange={(v) => {
-          const param = v as RoutableParam;
-          const defaults = getDefaultRange(param);
-          onUpdate(route.id, {
-            parameter: param,
-            min: defaults.min,
-            max: defaults.max,
-          });
-        }}
-      />
-
-      <Slider
-        label="Modulation Depth"
-        value={route.depth}
-        min={0}
-        max={1}
-        step={0.01}
-        formatValue={(v) => `${(v * 100).toFixed(0)}%`}
-        onChange={(v) => onUpdate(route.id, { depth: v })}
-      />
-
-      {showRange && rangeConfig && (
+      {!isListenerMode && (
         <>
-          <Slider
-            label={`Min ${route.parameter}`}
-            value={route.min}
-            min={rangeConfig.minBound}
-            max={rangeConfig.maxBound}
-            step={rangeConfig.step}
-            formatValue={rangeConfig.format}
-            onChange={(v) => onUpdate(route.id, { min: v })}
+          <Select
+            label="Modulator"
+            value={route.modulatorId}
+            options={modulatorOptions}
+            onChange={(v) => onUpdate(route.id, { modulatorId: v })}
           />
-          <Slider
-            label={`Max ${route.parameter}`}
-            value={route.max}
-            min={rangeConfig.minBound}
-            max={rangeConfig.maxBound}
-            step={rangeConfig.step}
-            formatValue={rangeConfig.format}
-            onChange={(v) => onUpdate(route.id, { max: v })}
+
+          <Select
+            label="Sound Source"
+            value={route.sourceId}
+            options={sourceOptions}
+            onChange={(v) => {
+              const newSource = soundSources.find((s) => s.id === v);
+              const updates: Partial<Route> = { sourceId: v };
+              if (newSource) {
+                const validParams = newSource.sourceType === "sampler" ? SAMPLER_PARAMS : OSCILLATOR_PARAMS;
+                if (!validParams.some((p) => p.value === route.parameter)) {
+                  const newParam = validParams[0].value as RoutableParam;
+                  const defaults = getDefaultRange(newParam);
+                  updates.parameter = newParam;
+                  updates.min = defaults.min;
+                  updates.max = defaults.max;
+                }
+              }
+              onUpdate(route.id, updates);
+            }}
+          />
+
+          <Select
+            label="Parameter"
+            value={route.parameter}
+            options={parameterOptions}
+            onChange={(v) => {
+              const param = v as RoutableParam;
+              const defaults = getDefaultRange(param);
+              onUpdate(route.id, {
+                parameter: param,
+                min: defaults.min,
+                max: defaults.max,
+              });
+            }}
           />
         </>
       )}
 
+      {p("depth",
+        <Slider
+          label="Modulation Depth"
+          value={route.depth}
+          min={0}
+          max={1}
+          step={0.01}
+          formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+          onChange={(v) => onUpdate(route.id, { depth: v })}
+        />
+      )}
+
+      {showRange && rangeConfig && (
+        <>
+          {p("min",
+            <Slider
+              label={`Min ${route.parameter}`}
+              value={route.min}
+              min={rangeConfig.minBound}
+              max={rangeConfig.maxBound}
+              step={rangeConfig.step}
+              formatValue={rangeConfig.format}
+              onChange={(v) => onUpdate(route.id, { min: v })}
+            />
+          )}
+          {p("max",
+            <Slider
+              label={`Max ${route.parameter}`}
+              value={route.max}
+              min={rangeConfig.minBound}
+              max={rangeConfig.maxBound}
+              step={rangeConfig.step}
+              formatValue={rangeConfig.format}
+              onChange={(v) => onUpdate(route.id, { max: v })}
+            />
+          )}
+        </>
+      )}
+
       {/* Status indicators */}
-      {modulator?.type === "lfo" && (
+      {!isListenerMode && modulator?.type === "lfo" && (
         <div className="text-xs text-success bg-bg-primary rounded p-2 mt-1">
           LFO ({modulator.shape}) → {route.parameter}
         </div>
       )}
-      {modulator?.type === "envelope" && (
+      {!isListenerMode && modulator?.type === "envelope" && (
         <div className="text-xs text-success bg-bg-primary rounded p-2 mt-1">
           Envelope (A:{modulator.attack}s D:{modulator.decay}s S:{(modulator.sustain * 100).toFixed(0)}% R:{modulator.release}s) → {route.parameter}
         </div>
       )}
-      {modulator?.type === "data" && modulator.data && (
+      {!isListenerMode && modulator?.type === "data" && modulator.data && (
         <div className="text-xs text-success bg-bg-primary rounded p-2 mt-1">
           Data ({modulator.dataLength} pts) → {route.parameter}
         </div>
       )}
-      {modulator?.type === "data" && !modulator.data && (
+      {!isListenerMode && modulator?.type === "data" && !modulator.data && (
         <div className="text-xs text-danger bg-bg-primary rounded p-2 mt-1">
           No data loaded — upload a CSV in the modulator panel
         </div>
