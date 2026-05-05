@@ -33,16 +33,84 @@ const MIDI_CHANNEL_OPTIONS = [
   })),
 ];
 
+function ListenerMark({
+  targetId,
+  parameter,
+  isListenerParam,
+  onToggle,
+}: {
+  targetId: string;
+  parameter: string;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggle: (targetId: string, parameter: string) => void;
+}) {
+  const active = isListenerParam(targetId, parameter);
+  return (
+    <button
+      onClick={() => onToggle(targetId, parameter)}
+      className={`w-4 h-4 rounded-full border text-[8px] leading-none flex items-center justify-center cursor-pointer transition-all shrink-0 ${
+        active
+          ? "bg-success/30 border-success text-success"
+          : "bg-transparent border-border-color text-text-secondary hover:border-success/50"
+      }`}
+      title={active ? "Visible in listener mode (click to hide)" : "Hidden in listener mode (click to show)"}
+    >
+      L
+    </button>
+  );
+}
+
+function ParamRow({
+  targetId,
+  parameter,
+  isListenerMode,
+  isListenerParam,
+  onToggleListenerParam,
+  children,
+}: {
+  targetId: string;
+  parameter: string;
+  isListenerMode: boolean;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggleListenerParam: (targetId: string, parameter: string) => void;
+  children: React.ReactNode;
+}) {
+  const visible = isListenerParam(targetId, parameter);
+  if (isListenerMode && !visible) return null;
+
+  return (
+    <div className="flex items-start gap-1.5">
+      {!isListenerMode && (
+        <div className="pt-2.5">
+          <ListenerMark
+            targetId={targetId}
+            parameter={parameter}
+            isListenerParam={isListenerParam}
+            onToggle={onToggleListenerParam}
+          />
+        </div>
+      )}
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}
+
 interface ModulatorItemProps {
   modulator: Modulator;
+  isListenerMode: boolean;
   onUpdate: (id: string, updates: Partial<Modulator>) => void;
   onDelete: (id: string) => void;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggleListenerParam: (targetId: string, parameter: string) => void;
 }
 
 export function ModulatorItem({
   modulator,
+  isListenerMode,
   onUpdate,
   onDelete,
+  isListenerParam: isLP,
+  onToggleListenerParam: onToggleLP,
 }: ModulatorItemProps) {
   const [isDragging, setIsDragging] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -124,6 +192,18 @@ export function ModulatorItem({
     if (file) handleFileUpload(file);
   };
 
+  const p = (param: string, children: React.ReactNode) => (
+    <ParamRow
+      targetId={modulator.id}
+      parameter={param}
+      isListenerMode={isListenerMode}
+      isListenerParam={isLP}
+      onToggleListenerParam={onToggleLP}
+    >
+      {children}
+    </ParamRow>
+  );
+
   return (
     <div className="bg-bg-tertiary border border-border-color rounded-md p-3 flex flex-col gap-3">
       {/* Header */}
@@ -133,103 +213,119 @@ export function ModulatorItem({
           onChange={(name) => onUpdate(modulator.id, { name })}
           className="text-sm"
         />
-        <Button
-          label="DELETE"
-          variant="danger"
-          size="sm"
-          onClick={() => onDelete(modulator.id)}
-        />
+        {!isListenerMode && (
+          <Button
+            label="DELETE"
+            variant="danger"
+            size="sm"
+            onClick={() => onDelete(modulator.id)}
+          />
+        )}
       </div>
 
       {/* Type selector */}
-      <Select
-        label="Type"
-        value={modulator.type}
-        options={TYPE_OPTIONS}
-        onChange={(v) => onUpdate(modulator.id, { type: v as Modulator["type"] })}
-      />
+      {!isListenerMode && (
+        <Select
+          label="Type"
+          value={modulator.type}
+          options={TYPE_OPTIONS}
+          onChange={(v) => onUpdate(modulator.id, { type: v as Modulator["type"] })}
+        />
+      )}
 
       {/* LFO controls */}
       {modulator.type === "lfo" && (
         <>
-          <Select
-            label="Shape"
-            value={modulator.shape}
-            options={SHAPE_OPTIONS}
-            onChange={(v) =>
-              onUpdate(modulator.id, { shape: v as LfoShape })
-            }
-          />
-          <Slider
-            label="Rate"
-            value={modulator.rate}
-            min={0.01}
-            max={20}
-            step={0.01}
-            formatValue={(v) => `${v.toFixed(2)} Hz`}
-            onChange={(v) => onUpdate(modulator.id, { rate: v })}
-          />
-          <LfoPreview shape={modulator.shape} rate={modulator.rate} />
+          {!isListenerMode && (
+            <Select
+              label="Shape"
+              value={modulator.shape}
+              options={SHAPE_OPTIONS}
+              onChange={(v) =>
+                onUpdate(modulator.id, { shape: v as LfoShape })
+              }
+            />
+          )}
+          {p("rate",
+            <Slider
+              label="Rate"
+              value={modulator.rate}
+              min={0.01}
+              max={20}
+              step={0.01}
+              formatValue={(v) => `${v.toFixed(2)} Hz`}
+              onChange={(v) => onUpdate(modulator.id, { rate: v })}
+            />
+          )}
+          {!isListenerMode && (
+            <LfoPreview shape={modulator.shape} rate={modulator.rate} />
+          )}
         </>
       )}
 
       {/* Data-driven controls */}
       {modulator.type === "data" && (
         <>
-          <div
-            className={`border-2 border-dashed rounded-md p-6 text-center cursor-pointer transition-all ${
-              isDragging
-                ? "border-accent-secondary bg-accent-secondary/10"
-                : "border-border-color hover:border-accent-primary hover:bg-accent-primary/5"
-            }`}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            {modulator.dataName ? (
-              <>
-                <div className="font-bold text-sm mb-1">{modulator.dataName}</div>
-                <div className="text-xs text-text-secondary">Click to replace</div>
-              </>
-            ) : (
-              <>
-                <div className="font-bold text-sm mb-1">Drop CSV/JSON here</div>
-                <div className="text-xs text-text-secondary">or click to browse</div>
-              </>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.json,.txt"
-              className="hidden"
-              onChange={handleFileSelect}
+          {!isListenerMode && (
+            <div
+              className={`border-2 border-dashed rounded-md p-6 text-center cursor-pointer transition-all ${
+                isDragging
+                  ? "border-accent-secondary bg-accent-secondary/10"
+                  : "border-border-color hover:border-accent-primary hover:bg-accent-primary/5"
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {modulator.dataName ? (
+                <>
+                  <div className="font-bold text-sm mb-1">{modulator.dataName}</div>
+                  <div className="text-xs text-text-secondary">Click to replace</div>
+                </>
+              ) : (
+                <>
+                  <div className="font-bold text-sm mb-1">Drop CSV/JSON here</div>
+                  <div className="text-xs text-text-secondary">or click to browse</div>
+                </>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.json,.txt"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+            </div>
+          )}
+
+          {p("dataRate",
+            <Slider
+              label="Rate"
+              value={modulator.dataRate}
+              min={5}
+              max={2000}
+              step={1}
+              formatValue={(v) => `${v < 1000 ? v.toFixed(0) + " ms" : (v / 1000).toFixed(2) + " s"}`}
+              onChange={(v) => onUpdate(modulator.id, { dataRate: v })}
             />
-          </div>
+          )}
+          {p("dataSmoothing",
+            <Slider
+              label="Smoothing"
+              value={modulator.dataSmoothing}
+              min={0}
+              max={1}
+              step={0.01}
+              formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+              onChange={(v) => onUpdate(modulator.id, { dataSmoothing: v })}
+            />
+          )}
 
-          <Slider
-            label="Rate"
-            value={modulator.dataRate}
-            min={5}
-            max={2000}
-            step={1}
-            formatValue={(v) => `${v < 1000 ? v.toFixed(0) + " ms" : (v / 1000).toFixed(2) + " s"}`}
-            onChange={(v) => onUpdate(modulator.id, { dataRate: v })}
-          />
-          <Slider
-            label="Smoothing"
-            value={modulator.dataSmoothing}
-            min={0}
-            max={1}
-            step={0.01}
-            formatValue={(v) => `${(v * 100).toFixed(0)}%`}
-            onChange={(v) => onUpdate(modulator.id, { dataSmoothing: v })}
-          />
-
-          {modulator.data && (
+          {!isListenerMode && modulator.data && (
             <div className="mt-1 p-3 bg-bg-primary rounded">
               <div className="grid grid-cols-2 gap-2 mb-2">
                 <div className="bg-bg-tertiary p-2 rounded text-xs">
@@ -263,67 +359,81 @@ export function ModulatorItem({
       {/* Envelope (ADSR) controls */}
       {modulator.type === "envelope" && (
         <>
-          <Slider
-            label="Attack"
-            value={modulator.attack}
-            min={0.001}
-            max={5}
-            step={0.001}
-            formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
-            onChange={(v) => onUpdate(modulator.id, { attack: v })}
-          />
-          <Slider
-            label="Decay"
-            value={modulator.decay}
-            min={0.001}
-            max={5}
-            step={0.001}
-            formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
-            onChange={(v) => onUpdate(modulator.id, { decay: v })}
-          />
-          <Slider
-            label="Sustain"
-            value={modulator.sustain}
-            min={0}
-            max={1}
-            step={0.01}
-            formatValue={(v) => `${(v * 100).toFixed(0)}%`}
-            onChange={(v) => onUpdate(modulator.id, { sustain: v })}
-          />
-          <Slider
-            label="Release"
-            value={modulator.release}
-            min={0.001}
-            max={10}
-            step={0.001}
-            formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
-            onChange={(v) => onUpdate(modulator.id, { release: v })}
-          />
-          <EnvelopePreview
-            attack={modulator.attack}
-            decay={modulator.decay}
-            sustain={modulator.sustain}
-            release={modulator.release}
-          />
-          <Select
-            label="MIDI Channel"
-            value={String(modulator.midiChannel)}
-            options={MIDI_CHANNEL_OPTIONS}
-            onChange={(v) => onUpdate(modulator.id, { midiChannel: parseInt(v) })}
-          />
+          {p("attack",
+            <Slider
+              label="Attack"
+              value={modulator.attack}
+              min={0.001}
+              max={5}
+              step={0.001}
+              formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
+              onChange={(v) => onUpdate(modulator.id, { attack: v })}
+            />
+          )}
+          {p("decay",
+            <Slider
+              label="Decay"
+              value={modulator.decay}
+              min={0.001}
+              max={5}
+              step={0.001}
+              formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
+              onChange={(v) => onUpdate(modulator.id, { decay: v })}
+            />
+          )}
+          {p("sustain",
+            <Slider
+              label="Sustain"
+              value={modulator.sustain}
+              min={0}
+              max={1}
+              step={0.01}
+              formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+              onChange={(v) => onUpdate(modulator.id, { sustain: v })}
+            />
+          )}
+          {p("release",
+            <Slider
+              label="Release"
+              value={modulator.release}
+              min={0.001}
+              max={10}
+              step={0.001}
+              formatValue={(v) => `${v < 1 ? (v * 1000).toFixed(0) + " ms" : v.toFixed(2) + " s"}`}
+              onChange={(v) => onUpdate(modulator.id, { release: v })}
+            />
+          )}
+          {!isListenerMode && (
+            <>
+              <EnvelopePreview
+                attack={modulator.attack}
+                decay={modulator.decay}
+                sustain={modulator.sustain}
+                release={modulator.release}
+              />
+              <Select
+                label="MIDI Channel"
+                value={String(modulator.midiChannel)}
+                options={MIDI_CHANNEL_OPTIONS}
+                onChange={(v) => onUpdate(modulator.id, { midiChannel: parseInt(v) })}
+              />
+            </>
+          )}
         </>
       )}
 
       {/* Depth (shared by all types) */}
-      <Slider
-        label="Depth"
-        value={modulator.depth}
-        min={0}
-        max={1}
-        step={0.01}
-        formatValue={(v) => `${(v * 100).toFixed(0)}%`}
-        onChange={(v) => onUpdate(modulator.id, { depth: v })}
-      />
+      {p("depth",
+        <Slider
+          label="Depth"
+          value={modulator.depth}
+          min={0}
+          max={1}
+          step={0.01}
+          formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+          onChange={(v) => onUpdate(modulator.id, { depth: v })}
+        />
+      )}
     </div>
   );
 }

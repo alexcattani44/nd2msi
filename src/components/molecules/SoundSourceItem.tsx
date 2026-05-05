@@ -37,20 +37,88 @@ const FILTER_TYPE_OPTIONS = [
 
 interface SoundSourceItemProps {
   source: SoundSource;
+  isListenerMode: boolean;
   onUpdate: (id: string, updates: Partial<SoundSource>) => void;
   onDelete: (id: string) => void;
   onChangeType: (id: string, type: SourceType) => void;
   onLoadFile: (id: string, file: File) => void;
   onNoteOn?: (sourceId: string, frequency: number) => void;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggleListenerParam: (targetId: string, parameter: string) => void;
+}
+
+function ListenerMark({
+  targetId,
+  parameter,
+  isListenerParam,
+  onToggle,
+}: {
+  targetId: string;
+  parameter: string;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggle: (targetId: string, parameter: string) => void;
+}) {
+  const active = isListenerParam(targetId, parameter);
+  return (
+    <button
+      onClick={() => onToggle(targetId, parameter)}
+      className={`w-4 h-4 rounded-full border text-[8px] leading-none flex items-center justify-center cursor-pointer transition-all shrink-0 ${
+        active
+          ? "bg-success/30 border-success text-success"
+          : "bg-transparent border-border-color text-text-secondary hover:border-success/50"
+      }`}
+      title={active ? "Visible in listener mode (click to hide)" : "Hidden in listener mode (click to show)"}
+    >
+      L
+    </button>
+  );
+}
+
+function ParamRow({
+  targetId,
+  parameter,
+  isListenerMode,
+  isListenerParam,
+  onToggleListenerParam,
+  children,
+}: {
+  targetId: string;
+  parameter: string;
+  isListenerMode: boolean;
+  isListenerParam: (targetId: string, parameter: string) => boolean;
+  onToggleListenerParam: (targetId: string, parameter: string) => void;
+  children: React.ReactNode;
+}) {
+  const visible = isListenerParam(targetId, parameter);
+  if (isListenerMode && !visible) return null;
+
+  return (
+    <div className="flex items-start gap-1.5">
+      {!isListenerMode && (
+        <div className="pt-2.5">
+          <ListenerMark
+            targetId={targetId}
+            parameter={parameter}
+            isListenerParam={isListenerParam}
+            onToggle={onToggleListenerParam}
+          />
+        </div>
+      )}
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
 }
 
 export function SoundSourceItem({
   source,
+  isListenerMode,
   onUpdate,
   onDelete,
   onChangeType,
   onLoadFile,
   onNoteOn,
+  isListenerParam: isLP,
+  onToggleListenerParam: onToggleLP,
 }: SoundSourceItemProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeNote, setActiveNote] = useState<string | null>(null);
@@ -104,6 +172,18 @@ export function SoundSourceItem({
     }
   };
 
+  const p = (param: string, children: React.ReactNode) => (
+    <ParamRow
+      targetId={source.id}
+      parameter={param}
+      isListenerMode={isListenerMode}
+      isListenerParam={isLP}
+      onToggleListenerParam={onToggleLP}
+    >
+      {children}
+    </ParamRow>
+  );
+
   return (
     <div
       className="bg-bg-tertiary border border-border-color rounded-md p-3 flex flex-col gap-3"
@@ -118,50 +198,56 @@ export function SoundSourceItem({
           onChange={(name) => onUpdate(source.id, { name })}
           className="text-sm"
         />
-        <div className="flex items-center gap-1">
-          <Toggle
-            label="M"
-            active={source.muted}
-            size="sm"
-            activeColor="danger"
-            onChange={(v) => onUpdate(source.id, { muted: v })}
-          />
-          <Toggle
-            label="S"
-            active={source.solo}
-            size="sm"
-            activeColor="warning"
-            onChange={(v) => onUpdate(source.id, { solo: v })}
-          />
-          <Button
-            label="DELETE"
-            variant="danger"
-            size="sm"
-            onClick={() => onDelete(source.id)}
-          />
-        </div>
+        {!isListenerMode && (
+          <div className="flex items-center gap-1">
+            <Toggle
+              label="M"
+              active={source.muted}
+              size="sm"
+              activeColor="danger"
+              onChange={(v) => onUpdate(source.id, { muted: v })}
+            />
+            <Toggle
+              label="S"
+              active={source.solo}
+              size="sm"
+              activeColor="warning"
+              onChange={(v) => onUpdate(source.id, { solo: v })}
+            />
+            <Button
+              label="DELETE"
+              variant="danger"
+              size="sm"
+              onClick={() => onDelete(source.id)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Source type selector */}
-      <Select
-        label="Source Type"
-        value={source.sourceType}
-        options={SOURCE_TYPE_OPTIONS}
-        onChange={(v) => onChangeType(source.id, v as SourceType)}
-      />
+      {!isListenerMode && (
+        <Select
+          label="Source Type"
+          value={source.sourceType}
+          options={SOURCE_TYPE_OPTIONS}
+          onChange={(v) => onChangeType(source.id, v as SourceType)}
+        />
+      )}
 
       {/* ── Oscillator controls ── */}
       {source.sourceType === "oscillator" && (
         <>
-          <Select
-            label="Waveform"
-            value={source.waveform}
-            options={WAVEFORM_OPTIONS}
-            onChange={(v) => onUpdate(source.id, { waveform: v as SoundSource["waveform"] })}
-          />
+          {!isListenerMode && (
+            <Select
+              label="Waveform"
+              value={source.waveform}
+              options={WAVEFORM_OPTIONS}
+              onChange={(v) => onUpdate(source.id, { waveform: v as SoundSource["waveform"] })}
+            />
+          )}
 
           {/* Custom waveform partials editor */}
-          {source.waveform === "custom" && (
+          {!isListenerMode && source.waveform === "custom" && (
             <div className="flex flex-col gap-1">
               <label className="text-xs uppercase tracking-wider text-text-secondary">
                 Partials (Harmonics)
@@ -187,35 +273,41 @@ export function SoundSourceItem({
             </div>
           )}
 
-          <Slider
-            label="Frequency"
-            value={source.frequency}
-            min={20}
-            max={2000}
-            step={1}
-            formatValue={(v) => `${v.toFixed(1)} Hz`}
-            onChange={(v) => onUpdate(source.id, { frequency: v })}
-          />
+          {p("frequency",
+            <Slider
+              label="Frequency"
+              value={source.frequency}
+              min={20}
+              max={2000}
+              step={1}
+              formatValue={(v) => `${v.toFixed(1)} Hz`}
+              onChange={(v) => onUpdate(source.id, { frequency: v })}
+            />
+          )}
 
           {/* Keyboard input toggle */}
-          <div className="flex items-center gap-2">
-            <Toggle
-              label="KEYBOARD"
-              active={keyboardEnabled}
-              size="sm"
-              activeColor="success"
-              onChange={setKeyboardEnabled}
-            />
-            {activeNote && (
-              <span className="text-xs font-mono text-accent-tertiary bg-bg-primary px-2 py-0.5 rounded">
-                {activeNote}
-              </span>
-            )}
-          </div>
-          {keyboardEnabled && (
-            <div className="text-xs text-text-secondary bg-bg-primary rounded p-2">
-              Click this panel and use Z-M (lower), Q-P (upper) keys to play notes
-            </div>
+          {!isListenerMode && (
+            <>
+              <div className="flex items-center gap-2">
+                <Toggle
+                  label="KEYBOARD"
+                  active={keyboardEnabled}
+                  size="sm"
+                  activeColor="success"
+                  onChange={setKeyboardEnabled}
+                />
+                {activeNote && (
+                  <span className="text-xs font-mono text-accent-tertiary bg-bg-primary px-2 py-0.5 rounded">
+                    {activeNote}
+                  </span>
+                )}
+              </div>
+              {keyboardEnabled && (
+                <div className="text-xs text-text-secondary bg-bg-primary rounded p-2">
+                  Click this panel and use Z-M (lower), Q-P (upper) keys to play notes
+                </div>
+              )}
+            </>
           )}
         </>
       )}
@@ -223,160 +315,188 @@ export function SoundSourceItem({
       {/* ── Sampler controls ── */}
       {source.sourceType === "sampler" && (
         <>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs uppercase tracking-wider text-text-secondary">
-              Audio File
-            </label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".wav,.mp3,.ogg,audio/wav,audio/mpeg,audio/ogg"
-              onChange={handleFileSelect}
-              className="hidden"
+          {!isListenerMode && (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs uppercase tracking-wider text-text-secondary">
+                Audio File
+              </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".wav,.mp3,.ogg,audio/wav,audio/mpeg,audio/ogg"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full px-3 py-2 bg-bg-primary border border-border-color border-dashed rounded text-sm text-text-secondary hover:border-accent-primary hover:text-text-primary transition-all cursor-pointer text-left"
+              >
+                {source.audioFileName
+                  ? `${source.audioFileName}`
+                  : "Click to load audio file..."}
+              </button>
+            </div>
+          )}
+
+          {!isListenerMode && (
+            <>
+              <Slider
+                label="Start"
+                value={source.sampleStart}
+                min={0}
+                max={1}
+                step={0.001}
+                formatValue={(v) => `${(v * 100).toFixed(1)}%`}
+                onChange={(v) => onUpdate(source.id, { sampleStart: v })}
+              />
+              <Slider
+                label="End"
+                value={source.sampleEnd}
+                min={0}
+                max={1}
+                step={0.001}
+                formatValue={(v) => `${(v * 100).toFixed(1)}%`}
+                onChange={(v) => onUpdate(source.id, { sampleEnd: v })}
+              />
+              <Select
+                label="Loop Mode"
+                value={source.loopMode}
+                options={LOOP_MODE_OPTIONS}
+                onChange={(v) => onUpdate(source.id, { loopMode: v as LoopMode })}
+              />
+            </>
+          )}
+
+          {p("pitchShift",
+            <Slider
+              label="Pitch Shift"
+              value={source.pitchShift}
+              min={-24}
+              max={24}
+              step={1}
+              formatValue={(v) => `${v > 0 ? "+" : ""}${v} st`}
+              onChange={(v) => onUpdate(source.id, { pitchShift: v })}
             />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full px-3 py-2 bg-bg-primary border border-border-color border-dashed rounded text-sm text-text-secondary hover:border-accent-primary hover:text-text-primary transition-all cursor-pointer text-left"
-            >
-              {source.audioFileName
-                ? `${source.audioFileName}`
-                : "Click to load audio file..."}
-            </button>
-          </div>
+          )}
 
-          <Slider
-            label="Start"
-            value={source.sampleStart}
-            min={0}
-            max={1}
-            step={0.001}
-            formatValue={(v) => `${(v * 100).toFixed(1)}%`}
-            onChange={(v) => onUpdate(source.id, { sampleStart: v })}
-          />
-          <Slider
-            label="End"
-            value={source.sampleEnd}
-            min={0}
-            max={1}
-            step={0.001}
-            formatValue={(v) => `${(v * 100).toFixed(1)}%`}
-            onChange={(v) => onUpdate(source.id, { sampleEnd: v })}
-          />
-
-          <Select
-            label="Loop Mode"
-            value={source.loopMode}
-            options={LOOP_MODE_OPTIONS}
-            onChange={(v) => onUpdate(source.id, { loopMode: v as LoopMode })}
-          />
-
-          <Slider
-            label="Pitch Shift"
-            value={source.pitchShift}
-            min={-24}
-            max={24}
-            step={1}
-            formatValue={(v) => `${v > 0 ? "+" : ""}${v} st`}
-            onChange={(v) => onUpdate(source.id, { pitchShift: v })}
-          />
-
-          <Slider
-            label="Speed"
-            value={source.playbackRate}
-            min={0.25}
-            max={4}
-            step={0.01}
-            formatValue={(v) => `${v.toFixed(2)}x`}
-            onChange={(v) => onUpdate(source.id, { playbackRate: v })}
-          />
+          {p("playbackRate",
+            <Slider
+              label="Speed"
+              value={source.playbackRate}
+              min={0.25}
+              max={4}
+              step={0.01}
+              formatValue={(v) => `${v.toFixed(2)}x`}
+              onChange={(v) => onUpdate(source.id, { playbackRate: v })}
+            />
+          )}
         </>
       )}
 
       {/* ── Filter controls ── */}
-      <div className="border-t border-border-color pt-2 mt-1">
-        <Toggle
-          label="FILTER"
-          active={source.filterEnabled}
-          size="sm"
-          activeColor="accent"
-          onChange={(v) => onUpdate(source.id, { filterEnabled: v })}
-        />
-        {source.filterEnabled && (
-          <div className="flex flex-col gap-2 mt-2">
-            <Select
-              label="Filter Type"
-              value={source.filterType}
-              options={FILTER_TYPE_OPTIONS}
-              onChange={(v) => onUpdate(source.id, { filterType: v as FilterType })}
-            />
-            <Slider
-              label="Cutoff"
-              value={source.filterFrequency}
-              min={20}
-              max={20000}
-              step={1}
-              formatValue={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)} kHz` : `${v.toFixed(0)} Hz`}
-              onChange={(v) => onUpdate(source.id, { filterFrequency: v })}
-            />
-            <Slider
-              label="Resonance"
-              value={source.filterQ}
-              min={0.1}
-              max={20}
-              step={0.1}
-              formatValue={(v) => v.toFixed(1)}
-              onChange={(v) => onUpdate(source.id, { filterQ: v })}
-            />
-          </div>
-        )}
-      </div>
+      {!isListenerMode && (
+        <div className="border-t border-border-color pt-2 mt-1">
+          <Toggle
+            label="FILTER"
+            active={source.filterEnabled}
+            size="sm"
+            activeColor="accent"
+            onChange={(v) => onUpdate(source.id, { filterEnabled: v })}
+          />
+          {source.filterEnabled && (
+            <div className="flex flex-col gap-2 mt-2">
+              <Select
+                label="Filter Type"
+                value={source.filterType}
+                options={FILTER_TYPE_OPTIONS}
+                onChange={(v) => onUpdate(source.id, { filterType: v as FilterType })}
+              />
+              <Slider
+                label="Cutoff"
+                value={source.filterFrequency}
+                min={20}
+                max={20000}
+                step={1}
+                formatValue={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)} kHz` : `${v.toFixed(0)} Hz`}
+                onChange={(v) => onUpdate(source.id, { filterFrequency: v })}
+              />
+              <Slider
+                label="Resonance"
+                value={source.filterQ}
+                min={0.1}
+                max={20}
+                step={0.1}
+                formatValue={(v) => v.toFixed(1)}
+                onChange={(v) => onUpdate(source.id, { filterQ: v })}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Filter params exposed in listener mode */}
+      {isListenerMode && isLP(source.id, "filterFrequency") && (
+        <ParamRow targetId={source.id} parameter="filterFrequency" isListenerMode={true} isListenerParam={isLP} onToggleListenerParam={onToggleLP}>
+          <Slider label="Cutoff" value={source.filterFrequency} min={20} max={20000} step={1} formatValue={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)} kHz` : `${v.toFixed(0)} Hz`} onChange={(v) => onUpdate(source.id, { filterFrequency: v })} />
+        </ParamRow>
+      )}
 
       {/* ── Shared controls ── */}
-      <Slider
-        label="Volume"
-        value={source.volume}
-        min={-60}
-        max={0}
-        step={0.1}
-        formatValue={(v) => `${v.toFixed(1)} dB`}
-        onChange={(v) => onUpdate(source.id, { volume: v })}
-      />
-      <Slider
-        label="Pan"
-        value={source.pan}
-        min={-1}
-        max={1}
-        step={0.01}
-        formatValue={(v) => v.toFixed(2)}
-        onChange={(v) => onUpdate(source.id, { pan: v })}
-      />
-      <Slider
-        label="Reverb"
-        value={source.reverbMix}
-        min={0}
-        max={1}
-        step={0.01}
-        formatValue={(v) => `${(v * 100).toFixed(0)}%`}
-        onChange={(v) => onUpdate(source.id, { reverbMix: v })}
-      />
-      <Slider
-        label="Delay"
-        value={source.delayMix}
-        min={0}
-        max={1}
-        step={0.01}
-        formatValue={(v) => `${(v * 100).toFixed(0)}%`}
-        onChange={(v) => onUpdate(source.id, { delayMix: v })}
-      />
-      <Slider
-        label="Delay Time"
-        value={source.delayTime}
-        min={0.01}
-        max={2}
-        step={0.01}
-        formatValue={(v) => `${v.toFixed(2)}s`}
-        onChange={(v) => onUpdate(source.id, { delayTime: v })}
-      />
+      {p("volume",
+        <Slider
+          label="Volume"
+          value={source.volume}
+          min={-60}
+          max={0}
+          step={0.1}
+          formatValue={(v) => `${v.toFixed(1)} dB`}
+          onChange={(v) => onUpdate(source.id, { volume: v })}
+        />
+      )}
+      {p("pan",
+        <Slider
+          label="Pan"
+          value={source.pan}
+          min={-1}
+          max={1}
+          step={0.01}
+          formatValue={(v) => v.toFixed(2)}
+          onChange={(v) => onUpdate(source.id, { pan: v })}
+        />
+      )}
+      {p("reverbMix",
+        <Slider
+          label="Reverb"
+          value={source.reverbMix}
+          min={0}
+          max={1}
+          step={0.01}
+          formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+          onChange={(v) => onUpdate(source.id, { reverbMix: v })}
+        />
+      )}
+      {p("delayMix",
+        <Slider
+          label="Delay"
+          value={source.delayMix}
+          min={0}
+          max={1}
+          step={0.01}
+          formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+          onChange={(v) => onUpdate(source.id, { delayMix: v })}
+        />
+      )}
+      {p("delayTime",
+        <Slider
+          label="Delay Time"
+          value={source.delayTime}
+          min={0.01}
+          max={2}
+          step={0.01}
+          formatValue={(v) => `${v.toFixed(2)}s`}
+          onChange={(v) => onUpdate(source.id, { delayTime: v })}
+        />
+      )}
     </div>
   );
 }

@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useRef, useEffect, useCallback } from "react";
+import React, { useRef, useEffect } from "react";
 import { SoundSourcePanel } from "@/components/organisms/SoundSourcePanel";
 import { RoutingMatrix } from "@/components/organisms/RoutingMatrix";
 import { ModulatorPanel } from "@/components/organisms/ModulatorPanel";
-import { ListenerMode } from "@/components/organisms/ListenerMode";
-import { ListenerSetupPanel } from "@/components/organisms/ListenerSetupPanel";
 import { Button } from "@/components/atoms/Button";
+import { Toggle } from "@/components/atoms/Toggle";
 import { useAudioEngine } from "@/hooks/useAudioEngine";
 
 export default function Home() {
@@ -16,7 +15,8 @@ export default function Home() {
     routes,
     masterVolume,
     isPlaying,
-    listenerConfig,
+    isListenerMode,
+    listenerParams,
     addSource,
     updateSource,
     deleteSource,
@@ -33,38 +33,23 @@ export default function Home() {
     noteOn,
     exportProjectFile,
     importProjectFile,
-    enterListenerMode,
-    exitListenerMode,
-    toggleListenerFullscreen,
-    toggleListenerHelp,
-    setListenerTheme,
-    addListenerParameter,
-    updateListenerParameter,
-    deleteListenerParameter,
-    resetListenerState,
+    toggleListenerMode,
+    toggleListenerParam,
+    isListenerParam,
+    hasAnyListenerParams,
   } = useAudioEngine();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /* ── Fullscreen API integration ── */
-  const handleToggleFullscreen = useCallback(() => {
-    toggleListenerFullscreen();
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen?.();
-    } else {
-      document.exitFullscreen?.();
-    }
-  }, [toggleListenerFullscreen]);
-
+  /* ── Escape key exits listener mode ── */
   useEffect(() => {
-    const onFullscreenChange = () => {
-      if (!document.fullscreenElement && listenerConfig.fullscreen) {
-        toggleListenerFullscreen();
-      }
+    if (!isListenerMode) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") toggleListenerMode();
     };
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
-  }, [listenerConfig.fullscreen, toggleListenerFullscreen]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isListenerMode, toggleListenerMode]);
 
   const handleLoadProject = () => {
     fileInputRef.current?.click();
@@ -77,34 +62,6 @@ export default function Home() {
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
-
-  /* ── Listener Mode overlay ── */
-  if (listenerConfig.enabled) {
-    return (
-      <ListenerMode
-        config={listenerConfig}
-        soundSources={soundSources}
-        modulators={modulators}
-        isPlaying={isPlaying}
-        masterVolume={masterVolume}
-        onTogglePlayback={togglePlayback}
-        onUpdateSource={updateSource}
-        onUpdateModulator={updateModulator}
-        onChangeMasterVolume={changeMasterVolume}
-        onExit={() => {
-          if (document.fullscreenElement) document.exitFullscreen?.();
-          exitListenerMode();
-        }}
-        onToggleFullscreen={handleToggleFullscreen}
-        onToggleHelp={toggleListenerHelp}
-        onSetTheme={setListenerTheme}
-        onAddParameter={addListenerParameter}
-        onUpdateParameter={updateListenerParameter}
-        onDeleteParameter={deleteListenerParameter}
-        onReset={resetListenerState}
-      />
-    );
-  }
 
   return (
     <div className="flex flex-col h-screen">
@@ -134,16 +91,33 @@ export default function Home() {
             variant="primary"
             onClick={togglePlayback}
           />
-          <Button label="LISTENER MODE" variant="secondary" onClick={enterListenerMode} />
-          <Button label="SAVE PROJECT" variant="secondary" onClick={exportProjectFile} />
-          <Button label="LOAD PROJECT" variant="secondary" onClick={handleLoadProject} />
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json"
-            className="hidden"
-            onChange={handleFileSelect}
+
+          <Toggle
+            label="LISTENER"
+            active={isListenerMode}
+            activeColor="success"
+            onChange={toggleListenerMode}
           />
+
+          {!isListenerMode && (
+            <>
+              <Button label="SAVE PROJECT" variant="secondary" onClick={exportProjectFile} />
+              <Button label="LOAD PROJECT" variant="secondary" onClick={handleLoadProject} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+            </>
+          )}
+
+          {isListenerMode && (
+            <span className="text-xs text-text-secondary">
+              ESC to exit
+            </span>
+          )}
         </div>
       </header>
 
@@ -153,6 +127,7 @@ export default function Home() {
         <SoundSourcePanel
           sources={soundSources}
           masterVolume={masterVolume}
+          isListenerMode={isListenerMode}
           onAddSource={addSource}
           onUpdateSource={updateSource}
           onDeleteSource={deleteSource}
@@ -160,37 +135,34 @@ export default function Home() {
           onChangeSourceType={changeSourceType}
           onLoadAudioFile={loadAudioFile}
           onNoteOn={noteOn}
+          isListenerParam={isListenerParam}
+          onToggleListenerParam={toggleListenerParam}
+          hasAnyListenerParams={hasAnyListenerParams}
         />
 
-        {/* Center: Routing Matrix + Listener Setup */}
+        {/* Center: Routing Matrix */}
         <div className="bg-bg-primary border-x border-border-color p-4 flex flex-col gap-4 overflow-y-auto">
           <RoutingMatrix
             routes={routes}
             soundSources={soundSources}
             modulators={modulators}
+            isListenerMode={isListenerMode}
             onAddRoute={addRoute}
             onUpdateRoute={updateRoute}
             onDeleteRoute={deleteRoute}
-          />
-
-          {/* Listener Mode Setup */}
-          <ListenerSetupPanel
-            config={listenerConfig}
-            soundSources={soundSources}
-            modulators={modulators}
-            onAddParameter={addListenerParameter}
-            onUpdateParameter={updateListenerParameter}
-            onDeleteParameter={deleteListenerParameter}
-            onEnterListenerMode={enterListenerMode}
           />
         </div>
 
         {/* Right: Modulators */}
         <ModulatorPanel
           modulators={modulators}
+          isListenerMode={isListenerMode}
           onAddModulator={addModulator}
           onUpdateModulator={updateModulator}
           onDeleteModulator={deleteModulator}
+          isListenerParam={isListenerParam}
+          onToggleListenerParam={toggleListenerParam}
+          hasAnyListenerParams={hasAnyListenerParams}
         />
       </main>
     </div>

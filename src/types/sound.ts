@@ -157,65 +157,9 @@ export function createRoute(
 
 /* ── Listener Mode ── */
 
-export type ListenerControlType = "slider" | "button" | "xypad" | "dropdown" | "toggle";
-
-export type InteractionMode = "automatic" | "manual" | "hybrid";
-
-export interface ListenerParameter {
-  id: string;
-  /** Which source or modulator this parameter belongs to */
+export interface ListenerParam {
   targetId: string;
-  /** Whether this targets a sound source or modulator */
-  targetType: "source" | "modulator";
-  /** The parameter key to control */
   parameter: string;
-  /** How the control appears in listener mode */
-  controlType: ListenerControlType;
-  /** How the parameter changes */
-  interactionMode: InteractionMode;
-  /** Display label shown to the listener */
-  label: string;
-  /** For button controls: discrete values to jump between */
-  buttonValues?: number[];
-  /** For dropdown controls: named presets */
-  presets?: { label: string; value: number }[];
-}
-
-export type ListenerColorTheme = "dark" | "light" | "neon" | "warm";
-
-export interface ListenerModeConfig {
-  enabled: boolean;
-  fullscreen: boolean;
-  showHelp: boolean;
-  colorTheme: ListenerColorTheme;
-  parameters: ListenerParameter[];
-}
-
-export function createDefaultListenerConfig(): ListenerModeConfig {
-  return {
-    enabled: false,
-    fullscreen: false,
-    showHelp: false,
-    colorTheme: "dark",
-    parameters: [],
-  };
-}
-
-export function createListenerParameter(
-  targetId: string,
-  targetType: "source" | "modulator",
-  parameter: string,
-  label: string,
-): ListenerParameter {
-  return {
-    id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-    targetId,
-    targetType,
-    parameter,
-    controlType: "slider",
-    interactionMode: "manual",
-    label,
-  };
 }
 
 /**

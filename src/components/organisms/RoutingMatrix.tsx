@@ -9,6 +9,7 @@ interface RoutingMatrixProps {
   routes: Route[];
   soundSources: SoundSource[];
   modulators: Modulator[];
+  isListenerMode: boolean;
   onAddRoute: () => void;
   onUpdateRoute: (id: string, updates: Partial<Route>) => void;
   onDeleteRoute: (id: string) => void;
@@ -18,10 +19,13 @@ export function RoutingMatrix({
   routes,
   soundSources,
   modulators,
+  isListenerMode,
   onAddRoute,
   onUpdateRoute,
   onDeleteRoute,
 }: RoutingMatrixProps) {
+  if (isListenerMode) return null;
+
   const canAdd = soundSources.length > 0 && modulators.length > 0;
 
   // Build a set of (sourceId:param) keys that appear more than once,
