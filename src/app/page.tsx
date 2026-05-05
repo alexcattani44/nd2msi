@@ -150,6 +150,9 @@ export default function Home() {
             onAddRoute={addRoute}
             onUpdateRoute={updateRoute}
             onDeleteRoute={deleteRoute}
+            isListenerParam={isListenerParam}
+            onToggleListenerParam={toggleListenerParam}
+            hasAnyListenerParams={hasAnyListenerParams}
           />
         </div>
 
